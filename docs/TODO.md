@@ -2,16 +2,12 @@
 
 ## Format Compliance (cluster)
 
-- [ ] **Per-turn format reinforcement** — Inject a compact format reminder into
-      the conversation before each inference call, not just once in the system
-      prompt. Small models lose tag compliance after the first exchange when the
-      system prompt drifts out of their attention window.
-- [ ] **Multi-turn format drift** — Verify that per-turn reinforcement resolves
-      the tag dropout observed in TUI multi-turn sessions (replays show
-      `[observation]`/`[inference]` tags missing from turn 2 onward).
-- [ ] **Verify unprompted tool call fix in TUI** — The fake tool-exchange removal
-      (commit f3fda40) only tested in print mode. Confirm the model no longer
-      fires unsolicited `list_files` calls in interactive TUI sessions.
+- [x] **Per-turn format reinforcement** — Done (ed718c1). msgsWithFormatNudge()
+      appends a transient reminder before every inference call (TUI + print mode).
+- [ ] **Multi-turn format drift** — Verify in TUI that per-turn nudge resolves
+      tag dropout on turn 2+. Run a multi-turn session and check replay.
+- [ ] **Verify unprompted tool call fix in TUI** — Code verified: no fake tool
+      exchanges remain. Needs TUI session replay to confirm end-to-end.
 
 ## Context Management
 
