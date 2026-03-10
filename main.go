@@ -34,11 +34,17 @@ type inferProc interface {
 	infer(msgs []Message, maxTokens int, temp float64) (inferResponse, error)
 	startInfer(msgs []Message, maxTokens int, temp float64) tea.Cmd
 	nextToken() tea.Cmd
-	startReview(userMsg, primaryReply string) tea.Cmd
-	nextReviewToken() tea.Cmd
 	// restart kills the current backend and returns a fresh one for the given model.
 	// HTTP backends return themselves (gateway is always up).
 	restart(model, projectRoot string) (inferProc, error)
+}
+
+// reviewer extends inferProc with Socratic critic streaming.
+// Separated from inferProc to keep inference focused (Plan 9 Phase 6).
+// Both llmProc and httpProc implement this.
+type reviewer interface {
+	startReview(userMsg, primaryReply string) tea.Cmd
+	nextReviewToken() tea.Cmd
 }
 
 // ─────────────────────────────────────────────────────────────

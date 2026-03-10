@@ -753,12 +753,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"",
 			)
 			m.conversation = append(m.conversation, Message{Role: "assistant", Content: reply})
-			if m.cfg.review {
+			if m.cfg.review && m.critic() != nil {
 				userMsg := lastUserMsg(m.conversation)
 				m.displayLines = append(m.displayLines, style.Dim.Render("─── critic ───"))
 				m.state = stateReview
 				m.syncViewport()
-				return m, m.proc.startReview(userMsg, clean) // clean = plain text for prompt
+				return m, m.critic().startReview(userMsg, clean)
 			}
 			m.state = stateInput
 			m.syncViewport()
@@ -826,7 +826,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgReviewToken:
 		m.reviewBuf = append(m.reviewBuf, msg.token...)
 		m.syncViewport()
-		return m, m.proc.nextReviewToken()
+		return m, m.critic().nextReviewToken()
 
 	// ── Critic review complete ────────────────────────────────────────────────
 	case msgReviewDone:
@@ -1547,6 +1547,15 @@ func lastUserMsg(conv []Message) string {
 // turn returns a Turn configured for the current model's format mode.
 func (m *Model) turn() Turn {
 	return Turn{Native: m.useNative, CWD: m.cfg.cwd}
+}
+
+// critic returns the reviewer interface from the current proc.
+// Returns nil if the proc does not support critic review.
+func (m *Model) critic() reviewer {
+	if r, ok := m.proc.(reviewer); ok {
+		return r
+	}
+	return nil
 }
 
 // renderMarkdown renders markdown text to styled terminal output at the given width.
