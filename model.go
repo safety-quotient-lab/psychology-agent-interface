@@ -68,8 +68,12 @@ func (m Model) stateHelp() []key.Binding {
 		return []key.Binding{m.keys.Abort, m.keys.Quit}
 	case stateConfirm:
 		return []key.Binding{m.keys.Approve, m.keys.Quit}
+	case stateToolRun:
+		return []key.Binding{m.keys.Abort, m.keys.Quit}
 	case stateAskUser:
-		return []key.Binding{m.keys.Submit, m.keys.Quit}
+		return []key.Binding{m.keys.Submit, m.keys.Abort, m.keys.Quit}
+	case stateLoading:
+		return []key.Binding{m.keys.Abort, m.keys.Quit}
 	case stateModelSelect:
 		return []key.Binding{m.keys.Navigate, m.keys.Select, m.keys.Abort, m.keys.Quit}
 	default:
@@ -647,6 +651,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Streaming token ───────────────────────────────────────────────────────
 	case msgToken:
+		// Drop stale tokens from aborted inferences
+		if m.state != stateThinking {
+			return m, nil
+		}
 		m.streamBuf = append(m.streamBuf, msg.token...)
 		m.syncViewport()
 		return m, m.proc.nextToken()
@@ -665,7 +673,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.streamBuf = nil
 			m.pendingSummary = false // clear in case error occurred mid-summary
-			m.displayLines = append(m.displayLines, style.Error.Render("Error: "+msg.err.Error()), "")
+			errMsg := msg.err.Error()
+			m.displayLines = append(m.displayLines, style.Error.Render("Error: "+errMsg))
+			// Hint to restart if sidecar crashed
+			if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "EOF") {
+				m.displayLines = append(m.displayLines,
+					style.Dim.Render("  sidecar crashed — use /model to restart"), "")
+			} else {
+				m.displayLines = append(m.displayLines, "")
+			}
 			m.state = stateInput
 			m.syncViewport()
 			return m, nil
@@ -724,6 +740,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			clean := stripMarkup(reply)
 			if clean == "" {
 				clean = reply
+			}
+			// Guard against empty model output — don't pollute conversation
+			if strings.TrimSpace(clean) == "" {
+				m.displayLines = append(m.displayLines,
+					style.Warning.Render("⚠ empty reply from model"), "")
+				m.state = stateInput
+				m.syncViewport()
+				return m, nil
 			}
 			rendered := renderMarkdown(clean, m.vp.Width-2)
 			m.displayLines = append(m.displayLines,
@@ -803,6 +827,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Critic review token ───────────────────────────────────────────────────
 	case msgReviewToken:
+		// Drop stale tokens from aborted reviews
+		if m.state != stateReview {
+			return m, nil
+		}
 		m.reviewBuf = append(m.reviewBuf, msg.token...)
 		m.syncViewport()
 		return m, m.critic().nextReviewToken()
@@ -935,6 +963,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmdReadLoadLine(m.proc)
 			}
 
+		case stateLoading:
+			if msg.Type == tea.KeyEsc {
+				m.displayLines = append(m.displayLines, style.Warning.Render("⚠ cancelled loading"), "")
+				m.selectorReturn = true
+				m.state = stateModelSelect
+				m.syncViewport()
+				return m, nil
+			}
+
+		case stateToolRun:
+			if msg.Type == tea.KeyEsc {
+				// Cancel remaining tool batch, return to input
+				m.pendingTools = nil
+				m.displayLines = append(m.displayLines,
+					style.Warning.Render("⚠ tool batch cancelled"), "")
+				m.state = stateInput
+				m.input.Focus()
+				m.syncViewport()
+				return m, nil
+			}
+
 		case stateInput:
 			switch msg.Type {
 			case tea.KeyEnter:
@@ -1038,7 +1087,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case stateAskUser:
-			if msg.Type == tea.KeyEnter {
+			switch msg.Type {
+			case tea.KeyEsc:
+				// Cancel ask_user — deny and skip remaining tools
+				m.input.SetValue("")
+				m.displayLines = append(m.displayLines,
+					style.Warning.Render("⚠ cancelled"), "")
+				m.conversation = append(m.conversation, m.turn().FormatDenial("ask_user"))
+				m.pendingTools = nil
+				m.state = stateInput
+				m.input.Focus()
+				m.syncViewport()
+				return m, nil
+			case tea.KeyEnter:
 				answer := strings.TrimSpace(m.input.Value())
 				m.input.SetValue("")
 				if answer == "" {
@@ -1053,10 +1114,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, cmd
 				}
 				return m, m.finishToolBatch()
+			default:
+				var cmd tea.Cmd
+				m.input, cmd = m.input.Update(msg)
+				return m, cmd
 			}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
 
 		case stateConfirm:
 			switch msg.String() {
