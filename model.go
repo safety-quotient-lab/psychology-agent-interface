@@ -623,25 +623,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Strip any existing primed context before injecting fresh priming.
 		// Without this, repeated cd/cwd/clear accumulate duplicate stale listings.
 		m.conversation = stripPrimedContext(m.conversation)
-		// Few-shot example first (closest to system prompt) so small models
-		// see the expected output format before tool priming inflates context.
-		m.conversation = append(m.conversation, fewShotPriming(m.modelName)...)
-		// Inject updated file listing as a primed tool-use exchange.
-		if fl != "" {
-			if m.useNative {
-				m.conversation = append(m.conversation,
-					Message{Role: "assistant", Content: `<tool_call>{"name":"list_files","arguments":{"pattern":"*"}}</tool_call>`},
-					Message{Role: "tool", Name: "list_files", Content: fl},
-				)
-			} else {
-				m.conversation = append(m.conversation,
-					Message{Role: "user", Content: "List the files in the working directory."},
-					Message{Role: "assistant", Content: `TOOL_CALL: {"name": "list_files", "arguments": {"pattern": "*"}}`},
-					Message{Role: "user", Content: "TOOL_RESULT (list_files):\n" + fl + "\n\nContinue."},
-					Message{Role: "assistant", Content: "Working directory contains: " + fl},
-				)
-			}
+		// Rebuild system prompt with file listing embedded directly.
+		// Avoids fake tool-call exchanges that small models mimic unprompted.
+		claudeMD := m.claudeMD
+		if m.useNative {
+			m.conversation[0].Content = nativeSystem(m.cfg.cwd, m.modelName, fl, claudeMD)
+		} else {
+			m.conversation[0].Content = reactSystem(m.cfg.cwd, m.modelName, fl, claudeMD)
 		}
+		// Few-shot example right after system prompt so small models
+		// see the expected output format before any real user messages.
+		m.conversation = append(m.conversation, fewShotPriming(m.modelName)...)
 
 		// Now allow user input
 		m.state = stateInput
@@ -1251,28 +1243,22 @@ func (m *Model) handleCd(text string) (tea.Cmd, bool) {
 	return cmdAutoContext(m.cfg.cwd), true
 }
 
-// stripPrimedContext removes any previously injected list_files priming exchange
-// from the conversation, identified by the sentinel assistant message.
+// stripPrimedContext removes any previously injected few-shot priming messages
+// from the conversation, identified by known sentinel user prompts.
 func stripPrimedContext(conv []Message) []Message {
-	const nativeSentinel = `<tool_call>{"name":"list_files","arguments":{"pattern":"*"}}</tool_call>`
-	const reactSentinel  = "List the files in the working directory."
-	out := conv[:0]
+	sentinels := map[string]bool{
+		"What causes stress?":                                       true, // Tier 1
+		"How does attachment style affect adult relationships?":      true, // Tier 2/3
+	}
+	out := make([]Message, 0, len(conv))
 	skip := false
-	for i, msg := range conv {
-		if (msg.Role == "assistant" && msg.Content == nativeSentinel) ||
-			(msg.Role == "user" && msg.Content == reactSentinel) {
-			// Mark start of primed block; skip it and the messages that follow
-			// (native: 2 messages; react: 4 messages)
-			_ = i
-			skip = true
+	for _, msg := range conv {
+		if msg.Role == "user" && sentinels[msg.Content] {
+			skip = true // skip this user msg and the following assistant reply
+			continue
 		}
 		if skip {
-			// native block ends after tool result (Name=="list_files")
-			// react block ends after assistant ack ("Working directory contains:")
-			if (msg.Role == "tool" && msg.Name == "list_files") ||
-				(msg.Role == "assistant" && strings.HasPrefix(msg.Content, "Working directory contains:")) {
-				skip = false
-			}
+			skip = false // consumed the assistant reply
 			continue
 		}
 		out = append(out, msg)
