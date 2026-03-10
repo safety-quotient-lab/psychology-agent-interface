@@ -35,6 +35,30 @@
       copy/paste. Likely a bubbletea mouse event capture conflict. Investigate
       whether disabling mouse reporting or switching to a zone-based approach
       restores native terminal selection.
+- [ ] **Autoscroll on content overflow** — First content overflow requires manual
+      scroll. `syncViewport()` calls `GotoBottom()` only when `wasAtBottom ||
+      activeStream` — check if `wasAtBottom` returns false on the initial
+      overflow transition. May need to force-scroll when content first exceeds
+      viewport height.
+- [ ] **Input box full-width** — textarea does not expand to terminal width.
+      `newTextarea()` at model.go:243 sets no explicit width. Add
+      `ta.SetWidth(msg.Width)` in `WindowSizeMsg` handler and initial setup.
+- [ ] **Input box border** — Add a lipgloss border style to the textarea area
+      in `View()`. Use `lipgloss.RoundedBorder()` consistent with tool result
+      boxes. Account for border in `chatHeight()` chrome calculation.
+- [ ] **Prompt/status bar below input** — Show username, machine name, cwd,
+      model, and session stats below the input box. Use `os/user.Current()` and
+      `os.Hostname()`. Render as a styled line between input and help bar in
+      `View()`. Update `chatHeight()` chrome to account for the extra line.
+- [ ] **Fix TestGatewayHTTPProc timeout** — Test connects to port 7705 with no
+      server, always times out after 60s. Either add a test fixture/mock or
+      `t.Skip()` when gateway unavailable.
+- [ ] **Debug log not writing** — `~/.local/state/pai/debug.log` stays at 0
+      bytes despite `plog.L.Debug()` calls throughout model.go. Check logger
+      initialization and default log level.
+- [ ] **Verify StoppingCriteria live** — The sidecar tool call stop fix
+      (eead6ef) needs a live TUI test with llama-1b to confirm hallucinated
+      TOOL_RESULT text no longer appears.
 
 ## iOS Port
 
