@@ -39,9 +39,9 @@ func runPrint(c appConfig, proc inferProc) error {
 	fileList := executeTool("list_files", map[string]any{"pattern": "*"}, c.cwd)
 	var sysprompt string
 	if useNative {
-		sysprompt = nativeSystem(c.cwd, fileList, "")
+		sysprompt = nativeSystem(c.cwd, c.model, fileList, "")
 	} else {
-		sysprompt = reactSystem(c.cwd, fileList, "")
+		sysprompt = reactSystem(c.cwd, c.model, fileList, "")
 	}
 
 	// Prime the conversation with two fake prior tool-use exchanges so small models

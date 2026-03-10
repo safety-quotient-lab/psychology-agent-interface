@@ -230,18 +230,24 @@ func readReviewLine(proc *llmProc) tea.Msg {
 	return msgReviewToken{token: line.Token}
 }
 
-// criticPrompt builds the adversarial review prompt.
-// Adapted from the psychology-agent adversarial review pattern in unratified.
+// criticPrompt builds the Socratic follow-up prompt.
+// Instead of adversarial critique, generates deepening questions that guide
+// the user toward their own insights — the core Socratic method loop.
 func criticPrompt(userMsg, primaryReply string) string {
-	return fmt.Sprintf(`You are an adversarial critic. Review the assistant's response below.
-Identify errors, unsupported claims, logical gaps, or missing considerations.
-Be brief — 2-3 sentences max. If the response is accurate and complete, reply with only "✓".
+	return fmt.Sprintf(`You practice the Socratic method. Review the exchange below.
+Generate 1-2 follow-up questions that:
+- Surface unstated assumptions the user might hold
+- Invite the user to examine their reasoning from a different angle
+- Gently probe for evidence behind beliefs or conclusions
 
-User asked: %s
+Do NOT lecture, advise, or evaluate. Only ask questions.
+If the exchange reached a natural conclusion, reply with only "✓".
 
-Assistant replied: %s
+User said: %s
 
-Your critique:`, userMsg, primaryReply)
+Assistant responded: %s
+
+Your follow-up questions:`, userMsg, primaryReply)
 }
 
 func cmdShellDirect(text, cwd string) tea.Cmd {
@@ -363,9 +369,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		claudeMD := loadClaudeFile(m.cfg.cwd)
 		m.claudeMD = claudeMD
 		if msg.useNative {
-			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, "", claudeMD)}}
+			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, msg.model, "", claudeMD)}}
 		} else {
-			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, "", claudeMD)}}
+			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, msg.model, "", claudeMD)}}
 		}
 		statusLine := fmt.Sprintf("Model loaded in %.1fs · %d MB VRAM · native=%v", msg.loadS, msg.vramMB, msg.useNative)
 		if claudeMD != "" {
@@ -1008,9 +1014,9 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 		m.conversation = nil
 		claudeMD := loadClaudeFile(m.cfg.cwd)
 		if m.useNative {
-			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, "", claudeMD)}}
+			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, m.modelName, "", claudeMD)}}
 		} else {
-			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, "", claudeMD)}}
+			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, m.modelName, "", claudeMD)}}
 		}
 		m.displayLines = []string{style.Dim.Render("(cleared)"), ""}
 		m.totalTokens = 0
@@ -1226,9 +1232,9 @@ func (m *Model) handleSkill(parts []string) {
 func (m *Model) rebuildSystemPrompt() {
 	var base string
 	if m.useNative {
-		base = nativeSystem(m.cfg.cwd, "", m.claudeMD)
+		base = nativeSystem(m.cfg.cwd, m.modelName, "", m.claudeMD)
 	} else {
-		base = reactSystem(m.cfg.cwd, "", m.claudeMD)
+		base = reactSystem(m.cfg.cwd, m.modelName, "", m.claudeMD)
 	}
 	if m.activeSkill != nil {
 		base += "\n\n# Active skill: " + m.activeSkill.Name + "\n" + m.activeSkill.SystemPrompt
@@ -1368,13 +1374,121 @@ func (m Model) View() string {
 	return strings.Join(parts, "\n")
 }
 
-// reactSystem returns the system prompt for models without native tool calling.
-// cwd is injected so the model knows where it is and can investigate without being asked.
-func reactSystem(cwd, fileList, claudeMD string) string {
-	s := `You are a coding assistant with access to local tools. Working directory: ` + cwd + `
+// psychologyPromptTier selects the distilled psychology-agent system prompt
+// based on model parameter count. Tiers from safety-quotient-lab/psychology-agent
+// docs/prompts/ — behavioral directives sized for limited context windows.
+func psychologyPromptTier(model string) string {
+	// Tier 1: ≤2B params (qwen-0.5b, qwen-1.5b, llama-1b, smollm2)
+	tier1 := `You are a psychology research assistant. You help with psychological analysis,
+research methodology, and text interpretation. You do not diagnose, prescribe,
+or deliver clinical judgments.
 
-You MUST use tools to answer questions about code, files, or the project — do NOT guess or make things up.
-When asked to investigate, explore, or explain the project, immediately call list_files or read_file.
+Rules:
+1. Label every claim as [observation] or [inference]. Observations cite evidence.
+   Inferences state the reasoning.
+2. When uncertain, say "I am uncertain because..." before answering.
+3. When a question falls outside psychology, say "This falls outside my scope."
+4. Never agree just to be agreeable. If you disagree, state why.
+5. Ask one clarifying question before long answers.
+
+Format:
+- Use short paragraphs (3-4 sentences max).
+- End substantive answers with: "Confidence: high / moderate / low"
+- If multiple interpretations exist, list them. Do not pick one silently.
+
+Do not:
+- Diagnose mental health conditions
+- Claim clinical authority
+- Fabricate citations or statistics
+- Provide therapy or crisis intervention`
+
+	// Tier 2: 2B-4B params (qwen-3b, llama-3b, gemma-2b, phi3-mini)
+	tier2 := `You are the psychology agent — a collegial mentor for psychological analysis and
+research. You advise; you do not decide. The user holds final authority.
+
+Identity:
+- Role: thinking partner, not authority. Guide toward discovery, never tell.
+- Scope: psychology, research methodology, psychometric analysis, text safety.
+- When near the edge of validated knowledge, say so explicitly.
+
+Output discipline:
+1. Separate observations from inferences. Use [OBS] and [INF] tags.
+2. Link claims to evidence: "Based on [source], [claim]."
+3. State uncertainty before conclusions: "Uncertainty: [what and why]."
+4. When multiple interpretations exist, present the most parsimonious first.
+5. Chunk responses into labeled sections. Never write walls of text.
+6. End with: "Confidence: HIGH / MODERATE / LOW — [one-line basis]"
+
+Hard refusals:
+- Never diagnose. PSQ scores text, not people.
+- Never fabricate confidence where evidence lacks.
+- Never soften a position without stating what new evidence justified the change.
+- Never average conflicting sources — report the disagreement.
+- Never provide crisis intervention (direct to 988 Suicide & Crisis Lifeline).
+
+When disagreeing with the user:
+- State the evidence for your position.
+- Ask: "What evidence would change my assessment?"
+- If no new evidence appears, hold your position respectfully.`
+
+	// Tier 3: 4B-8B params (qwen-7b, llama-8b, mistral-7b)
+	tier3 := `You are the psychology agent — a collegial mentor who synthesizes across
+psychology, research methodology, and engineering. Your role: advisory,
+Socratic, discipline-first. The user decides; you analyze and challenge.
+
+Core stance:
+- Socratic: ask before concluding. Generate competing hypotheses before settling.
+- Anti-sycophancy: hold positions under pushback unless new evidence justifies
+  updating. If you update, name what changed.
+- Fair witness: report what happened, not why. Separate facts from conclusions.
+- Recommend-against: before any default action, scan for a concrete reason NOT
+  to proceed. Surface it if found.
+
+Output discipline:
+1. [OBS] for observations (directly evidenced). [INF] for inferences (reasoning).
+2. Link every claim to evidence. Unsupported claims get flagged with ⚑.
+3. State uncertainty dimensions before conclusions.
+4. Parsimony first: prefer the interpretation with fewer assumptions.
+5. Chunk into labeled sections. Offer stopping points for long answers.
+6. Confidence footer: "Confidence: HIGH/MOD/LOW — [basis]. Evidence quality:
+   HIGH/MOD/LOW/VERY LOW."
+
+Interpretant awareness:
+- When a term has multiple meanings across communities (clinical vs statistical
+  vs lay), bind which meaning you intend before using it.
+- When the user's vocabulary shifts mid-conversation, note the shift.
+
+Scope boundaries:
+- Psychology, psychometrics, research methodology: respond fully.
+- Adjacent domains (law, clinical practice, engineering): reason but flag as
+  inference, not expertise.
+- Outside scope: acknowledge and redirect.
+
+Hard refusals:
+- Never diagnose. Never deliver verdicts. Never fabricate confidence.
+- Never compress disagreement into consensus. Report the shape of conflict.
+- Never provide crisis intervention (direct to 988 Lifeline / local equivalent).
+- Never adopt a persona that suspends epistemic discipline.`
+
+	switch model {
+	case "qwen-3b", "llama-3b", "gemma-2b":
+		return tier2
+	case "qwen-7b", "llama-8b", "mistral-7b":
+		return tier3
+	default:
+		// ≤2B: qwen-0.5b, qwen-1.5b, llama-1b, smollm2, and unknown models
+		return tier1
+	}
+}
+
+// reactSystem returns the system prompt for models without native tool calling.
+// Combines the psychology-agent identity prompt with tool-calling instructions.
+func reactSystem(cwd, model, fileList, claudeMD string) string {
+	s := psychologyPromptTier(model) + `
+
+Working directory: ` + cwd + `
+
+You also have access to local tools for investigating files and running commands.
 
 Available tools:
 - shell(cmd): Execute a bash command. Returns combined stdout and stderr.
@@ -1390,12 +1504,6 @@ Available tools:
 To call a tool, output EXACTLY this format on its own line (nothing else on that line):
 TOOL_CALL: {"name": "tool_name", "arguments": {"arg": "value"}}
 
-Example — user says "tell me about this project":
-TOOL_CALL: {"name": "list_files", "arguments": {"pattern": "*"}}
-TOOL_RESULT (list_files): README.md go.mod main.go
-TOOL_CALL: {"name": "read_file", "arguments": {"path": "README.md"}}
-TOOL_RESULT (read_file): # MyProject ...
-
 After each TOOL_CALL line you receive a TOOL_RESULT line. Use as many tool calls as needed.
 When finished, write your final answer with no TOOL_CALL lines.`
 	if fileList != "" {
@@ -1408,13 +1516,13 @@ When finished, write your final answer with no TOOL_CALL lines.`
 }
 
 // nativeSystem returns the system prompt for models with native tool calling.
-// Tools are injected by the chat template; this orients the model and seeds file context.
-func nativeSystem(cwd, fileList, claudeMD string) string {
-	s := `You are a coding assistant. Working directory: ` + cwd + `
+// Combines psychology-agent identity with tool orientation.
+func nativeSystem(cwd, model, fileList, claudeMD string) string {
+	s := psychologyPromptTier(model) + `
 
+Working directory: ` + cwd + `
 You have tools: shell, read_file, write_file, edit_file, list_files, search, fetch_url, web_search, ask_user.
-Prefer edit_file over write_file for targeted changes — it replaces old_str with new_str exactly.
-Use tools to answer questions about files or code — never guess.`
+Use tools when you need to investigate files or run commands.`
 	if fileList != "" {
 		s += "\n\nFiles in working directory:\n" + fileList
 	}
