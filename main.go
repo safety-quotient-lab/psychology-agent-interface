@@ -468,7 +468,7 @@ func main() {
 			return run(c)
 		},
 	}
-	root.Flags().StringVarP(&c.model, "model", "m", "qwen-1.5b",
+	root.Flags().StringVarP(&c.model, "model", "m", "qwen-0.5b",
 		"Model key (qwen-0.5b, qwen-1.5b, qwen-3b, smollm2, gemma-2b, llama-1b, llama-3b)")
 	root.Flags().StringVarP(&c.cwd, "cwd", "C", mustGetwd(),
 		"Working directory for tools")

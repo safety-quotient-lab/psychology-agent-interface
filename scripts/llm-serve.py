@@ -296,7 +296,7 @@ def main():
     warnings.filterwarnings("ignore")
 
     ap = argparse.ArgumentParser(description="LLM sidecar for pai")
-    ap.add_argument("--model", "-m", default="qwen-1.5b", choices=list(MODELS))
+    ap.add_argument("--model", "-m", default="qwen-0.5b", choices=list(MODELS))
     ap.add_argument("--quant", "-q", default=None, choices=["4bit", "8bit"],
                     help="Quantization: 4bit (~1.7GB for 3b) or 8bit (~3.5GB for 3b)")
     args = ap.parse_args()

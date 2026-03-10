@@ -102,12 +102,12 @@ type modelInfo struct {
 }
 
 var selectableModels = []modelInfo{
-	{"qwen-0.5b", "Qwen 2.5 0.5B", "Tier 1 (≤2B)", "~1 GB"},
+	{"qwen-0.5b", "Qwen 2.5 0.5B", "Tier 1 (≤2B)", "~1 GB  ★ fast"},
 	{"qwen-1.5b", "Qwen 2.5 1.5B", "Tier 1 (≤2B)", "~3 GB"},
-	{"qwen-3b", "Qwen 2.5 3B", "Tier 2 (2B–4B)", "~5.6 GB"},
 	{"smollm2", "SmolLM2 1.7B", "Tier 1 (≤2B)", "~3 GB"},
-	{"gemma-2b", "Gemma 2 2B", "Tier 2 (2B–4B)", "~4 GB"},
 	{"llama-1b", "Llama 3.2 1B", "Tier 1 (≤2B)", "~2 GB"},
+	{"qwen-3b", "Qwen 2.5 3B", "Tier 2 (2B–4B)", "~5.6 GB"},
+	{"gemma-2b", "Gemma 2 2B", "Tier 2 (2B–4B)", "~4 GB"},
 	{"llama-3b", "Llama 3.2 3B", "Tier 2 (2B–4B)", "~6 GB"},
 }
 
