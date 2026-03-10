@@ -291,10 +291,14 @@ def load_model(key, quant=None):
         # MPS / CPU: device_map not supported; quantization requires bitsandbytes+CUDA.
         if quant:
             print(f"WARNING: quantization not supported on {DEVICE} — ignoring --quant", file=sys.stderr, flush=True)
-        # Use float32 on MPS — torch 2.10+ MPS attention overflows fp16 at
-        # longer context lengths (>~1000 tokens), producing NaN. Float32 doubles
-        # memory but these models are small enough (<6 GB even at float32).
-        dtype = torch.float32 if DEVICE == "mps" else torch.float16
+        # MPS dtype selection: fp16 overflows at longer contexts (>~1000 tokens),
+        # producing NaN. bfloat16 has the same exponent range as float32 (avoids
+        # overflow) at half the memory — ~2x faster than float32 on M1/M2.
+        # Requires torch ≥2.10 for MPS bfloat16 support.
+        if DEVICE == "mps":
+            dtype = torch.bfloat16
+        else:
+            dtype = torch.float16
         model = AutoModelForCausalLM.from_pretrained(
             model_id, torch_dtype=dtype, token=hf_token,
         ).to(DEVICE)
