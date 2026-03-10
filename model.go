@@ -717,7 +717,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"")
 			}
 			m.syncViewport()
-			return m, m.proc.startInfer(m.conversation, 1024, 0.2)
+			return m, m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelName), 1024, 0.2)
 		}
 
 		m.sessionTokens += msg.tokens
@@ -1001,7 +1001,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingSummary = true
 					return m, m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 				}
-				return m, m.proc.startInfer(m.conversation, 1024, 0.2)
+				return m, m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelName), 1024, 0.2)
 
 			case tea.KeyUp:
 				// Scroll viewport if input is empty; otherwise browse history
@@ -1183,7 +1183,7 @@ func (m *Model) finishToolBatch() tea.Cmd {
 		m.pendingSummary = true
 		return m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 	}
-	return m.proc.startInfer(m.conversation, 1024, 0.2)
+	return m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelName), 1024, 0.2)
 }
 
 // Context compaction ----------------------------------------------------------
@@ -1910,6 +1910,21 @@ Hard refusals:
 // fewShotPriming returns example user/assistant exchanges that demonstrate
 // the expected output format for the model's tier. Small models learn format
 // from conversation history more reliably than from system prompt rules alone.
+
+// msgsWithFormatNudge returns a copy of the conversation with a transient
+// format reminder appended as the last message. The nudge sits right before
+// the model generates, reinforcing tag compliance on every turn. The original
+// conversation slice remains unmodified.
+func msgsWithFormatNudge(conv []Message, model string) []Message {
+	nudge := formatReminder(model)
+	if nudge == "" {
+		return conv
+	}
+	// Append as a user message so it sits at the tail of the context window.
+	out := make([]Message, len(conv), len(conv)+1)
+	copy(out, conv)
+	return append(out, Message{Role: "user", Content: strings.TrimSpace(nudge)})
+}
 
 // formatReminder returns a compact format reminder appended to the end of the
 // system prompt. Placed last so it sits closest to the conversation, helping

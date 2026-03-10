@@ -62,7 +62,7 @@ func runPrint(c appConfig, proc inferProc) error {
 			// Use streaming inference. Tokens for tool-call turns are buffered
 			// (not written to stdout). Tokens for the final answer go to stdout.
 			var buf strings.Builder
-			_, _, err := lp.inferStream(msgs, 1024, 0.2, &buf)
+			_, _, err := lp.inferStream(msgsWithFormatNudge(msgs, c.model), 1024, 0.2, &buf)
 			if err != nil {
 				return fmt.Errorf("inference: %w", err)
 			}
@@ -80,7 +80,7 @@ func runPrint(c appConfig, proc inferProc) error {
 				// The model is already primed; this second call should reproduce
 				// the same reply (temperature 0.2 is low but not zero, so not
 				// guaranteed identical — acceptable trade-off vs. buffering).
-				_, _, err = lp.inferStream(msgs, 1024, 0.2, os.Stdout)
+				_, _, err = lp.inferStream(msgsWithFormatNudge(msgs, c.model), 1024, 0.2, os.Stdout)
 				if err != nil {
 					return fmt.Errorf("inference (stream): %w", err)
 				}
@@ -104,7 +104,7 @@ func runPrint(c appConfig, proc inferProc) error {
 		}
 
 		// Blocking inference (default).
-		ir, err := proc.infer(msgs, 1024, 0.2)
+		ir, err := proc.infer(msgsWithFormatNudge(msgs, c.model), 1024, 0.2)
 		if err != nil {
 			return fmt.Errorf("inference: %w", err)
 		}
