@@ -35,35 +35,47 @@
       `tea.WithMouseCellMotion()` from `tea.NewProgram()` and the `MouseMsg`
       handler. Mouse capture intercepted terminal selection. pgup/pgdn
       keyboard scrolling remains functional.
-- [ ] **Autoscroll on content overflow** — First content overflow requires manual
-      scroll. `syncViewport()` calls `GotoBottom()` only when `wasAtBottom ||
-      activeStream` — check if `wasAtBottom` returns false on the initial
-      overflow transition. May need to force-scroll when content first exceeds
-      viewport height.
-- [ ] **Input box full-width** — textarea does not expand to terminal width.
-      `newTextarea()` at model.go:243 sets no explicit width. Add
-      `ta.SetWidth(msg.Width)` in `WindowSizeMsg` handler and initial setup.
-- [ ] **Input box border** — Add a lipgloss border style to the textarea area
-      in `View()`. Use `lipgloss.RoundedBorder()` consistent with tool result
-      boxes. Account for border in `chatHeight()` chrome calculation.
-- [ ] **Prompt/status bar below input** — Show username, machine name, cwd,
-      model, and session stats below the input box. Use `os/user.Current()` and
-      `os.Hostname()`. Render as a styled line between input and help bar in
-      `View()`. Update `chatHeight()` chrome to account for the extra line.
+- [x] **Autoscroll on content overflow** — Fixed. `syncViewport()` now detects
+      first overflow (content crosses viewport height) and forces `GotoBottom()`.
+- [x] **Input box full-width** — Fixed. `SetWidth(msg.Width - 4)` in
+      `WindowSizeMsg` handler expands textarea to terminal width minus border.
+- [x] **Input box border** — Fixed. Wrapped textarea in `lipgloss.RoundedBorder()`
+      with `DimGray` border foreground. `chatHeight()` accounts for border.
+- [x] **Prompt/status bar** — Fixed. `renderPromptBar()` shows
+      `user@host:~/cwd` on left, `[model] Ntok` on right. Rendered between
+      input box and help bar in `View()`.
 - [x] **Fix TestGatewayHTTPProc timeout** — Fixed (3255039). Test now uses
       gateway's actual loaded model, skips doInfer on timeout. Suite runs in
       ~1.5s instead of ~62s.
-- [ ] **Debug log not writing** — `~/.local/state/pai/debug.log` stays at 0
-      bytes despite `plog.L.Debug()` calls throughout model.go. Check logger
-      initialization and default log level.
+- [x] **Debug log not writing** — Fixed. Default log level changed from
+      `WarnLevel` to `InfoLevel` in `pkg/log/log.go`. `plog.L.Info()` calls
+      now write to `~/.local/state/pai/debug.log`. Debug level still opt-in
+      via `PAI_LOG_LEVEL=debug`.
 - [ ] **Verify StoppingCriteria live** — The sidecar tool call stop fix
       (eead6ef) needs a live TUI test with llama-1b to confirm hallucinated
       TOOL_RESULT text no longer appears.
 
 ## iOS Port
 
-- [ ] **Extract `SystemPromptProvider` interface** — Decouple prompt content from
-      inference/UI in the Go codebase. Required before the Swift port can share
-      prompt logic. Design sketch at `docs/ios-sketch.md`.
+- [x] **Extract `SystemPromptProvider` interface** — Already satisfied by Plan 9
+      provider interfaces in `pkg/prompt/providers.go`: `IdentityProvider`,
+      `FormatProvider`, `ToolProvider`, `ContextProvider`, `FewShotProvider`.
+      The iOS `SystemPromptProvider` protocol maps directly to these.
 - [ ] **SwiftUI MVP** — llama.cpp backend, glass UI, conversational core. Phases
       defined in `docs/ios-sketch.md`.
+
+## Code Agent
+
+- [ ] **Go code generation and self-editing** — Extend pai to write Go code and
+      edit its own codebase. Key capabilities needed:
+      - `write_file` and `edit_file` tools already exist but need Go-aware
+        validation (syntax check via `go build`, `goimports`)
+      - System prompt persona extension: add a "software engineer" skill overlay
+        that activates when the user asks for code changes
+      - `go build` / `go test` feedback loop: after writing code, automatically
+        run build+test and feed errors back for self-correction
+      - Project context: embed `go.mod`, package structure, and recent git log
+        in the workspace context so the model understands the codebase
+      - Safety: require approval for `write_file`/`edit_file` (already gated),
+        add `go vet` as post-write validation before committing
+      - Consider a `/dev` skill that activates the full development toolchain

@@ -541,6 +541,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.help.Width = msg.Width
 		m.progress.Width = msg.Width / 3
+		m.input.SetWidth(msg.Width - 4) // account for border padding
 		if !m.vpReady {
 			m.vp = viewport.New(msg.Width, m.chatHeight())
 			m.vpReady = true
@@ -1645,18 +1646,23 @@ func (m *Model) syncViewport() {
 		wrapped := wordwrap.String(string(m.reviewBuf), m.vp.Width-2)
 		content += style.Dim.Render(wrapped)
 	}
+	prevTotal := m.vp.TotalLineCount()
 	m.vp.SetContent(content)
-	if wasAtBottom || activeStream {
+	// Auto-scroll: follow bottom during streaming, when user was already
+	// at bottom, or on first overflow (content just exceeded viewport).
+	newTotal := m.vp.TotalLineCount()
+	firstOverflow := prevTotal <= m.vp.Height && newTotal > m.vp.Height
+	if wasAtBottom || activeStream || firstOverflow {
 		m.vp.GotoBottom()
 	}
 }
 
 func (m Model) chatHeight() int {
-	// header(1) + statusLine(1) + helpBar(1) + inputArea + border padding
+	// header(1) + statusLine(1) + promptBar(1) + helpBar(1) + inputArea
 	chrome := 4
 	switch m.state {
 	case stateInput, stateAskUser:
-		chrome += m.input.Height() // textarea visible lines
+		chrome += m.input.Height() + 2 // textarea + border (top+bottom)
 	case stateConfirm:
 		chrome += 2 // tool detail + y/N prompt
 	default:
@@ -1667,6 +1673,41 @@ func (m Model) chatHeight() int {
 		h = 4
 	}
 	return h
+}
+
+// renderPromptBar returns a status line showing user, host, cwd, model.
+func (m Model) renderPromptBar() string {
+	user := os.Getenv("USER")
+	host, _ := os.Hostname()
+	// Shorten hostname (drop domain)
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		host = host[:i]
+	}
+
+	cwd := m.cfg.cwd
+	if home, _ := os.UserHomeDir(); home != "" && strings.HasPrefix(cwd, home) {
+		cwd = "~" + cwd[len(home):]
+	}
+
+	model := m.modelName
+	if model == "" {
+		model = m.cfg.model
+	}
+
+	left := style.Dim.Render(user + "@" + host + ":" + cwd)
+	right := ""
+	if model != "" {
+		right = style.Dim.Render("[" + model + "]")
+	}
+	if m.sessionTokens > 0 {
+		right += style.Dim.Render(fmt.Sprintf(" %dtok", m.sessionTokens))
+	}
+
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 // View ------------------------------------------------------------------------
@@ -1720,7 +1761,11 @@ func (m Model) View() string {
 	var inputBar string
 	switch m.state {
 	case stateInput, stateAskUser:
-		inputBar = m.input.View()
+		inputBorder := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(style.DimGray).
+			Width(m.width - 2)
+		inputBar = inputBorder.Render(m.input.View())
 	case stateConfirm:
 		if len(m.pendingTools) > m.toolIdx {
 			tool := m.pendingTools[m.toolIdx]
@@ -1730,10 +1775,13 @@ func (m Model) View() string {
 		}
 	}
 
-	parts := []string{header, m.vp.View(), statusLine, helpBar}
+	promptBar := m.renderPromptBar()
+
+	parts := []string{header, m.vp.View(), statusLine}
 	if inputBar != "" {
 		parts = append(parts, inputBar)
 	}
+	parts = append(parts, promptBar, helpBar)
 	return strings.Join(parts, "\n")
 }
 

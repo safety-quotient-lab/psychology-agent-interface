@@ -33,8 +33,10 @@ func init() {
 		L.SetLevel(clog.DebugLevel)
 	case "info":
 		L.SetLevel(clog.InfoLevel)
-	case "warn", "":
+	case "warn":
 		L.SetLevel(clog.WarnLevel)
+	case "":
+		L.SetLevel(clog.InfoLevel)
 	case "error":
 		L.SetLevel(clog.ErrorLevel)
 	}
