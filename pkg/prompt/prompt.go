@@ -98,9 +98,13 @@ func (ns Namespace) Build(tier int, native bool) (systemPrompt string, priming [
 
 	systemPrompt = sb.String()
 
-	// 7. Few-shot examples
+	// 7. Few-shot examples — tagged so the export can skip them
 	if ns.FewShot != nil {
-		priming = ns.FewShot.Examples(tier)
+		examples := ns.FewShot.Examples(tier)
+		for i := range examples {
+			examples[i].Name = "_priming"
+		}
+		priming = examples
 	}
 
 	return systemPrompt, priming

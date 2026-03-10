@@ -27,19 +27,10 @@ type toolResultBlock struct {
 	Content   string `json:"content"`
 }
 
-// isPriming returns true if the message looks like a few-shot priming example.
-// Priming messages use specific patterns injected by PsychologyFewShot.
+// isPriming returns true if the message carries the "_priming" tag.
+// Priming messages get tagged in Namespace.Build() so the export skips them.
 func isPriming(msg Message) bool {
-	if msg.Role == "user" && strings.HasPrefix(msg.Content, "What ") && len(msg.Content) < 100 {
-		return true
-	}
-	if msg.Role == "assistant" && strings.Contains(msg.Content, "[observation]") && strings.Contains(msg.Content, "Confidence:") {
-		// Check if it looks like the canned example (short, formatted)
-		if len(msg.Content) < 500 {
-			return true
-		}
-	}
-	return false
+	return msg.Name == "_priming"
 }
 
 // isToolCallOnly returns true if the content contains only tool call markup

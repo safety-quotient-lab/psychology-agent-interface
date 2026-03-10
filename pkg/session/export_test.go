@@ -11,8 +11,8 @@ import (
 func TestExportJSONLSkipsPriming(t *testing.T) {
 	conv := []Message{
 		{Role: "system", Content: "system prompt"},
-		{Role: "user", Content: "What causes anxiety?"},
-		{Role: "assistant", Content: "[observation] test\n\nConfidence: high"},
+		{Role: "user", Name: "_priming", Content: "What causes anxiety?"},
+		{Role: "assistant", Name: "_priming", Content: "[observation] test\n\nConfidence: high"},
 		{Role: "user", Content: "Hello, tell me about stress"},
 		{Role: "assistant", Content: "Stress affects everyone differently."},
 	}

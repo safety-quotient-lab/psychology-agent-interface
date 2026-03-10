@@ -314,7 +314,7 @@ class MLXBackend:
             import mlx.core as mx
             import mlx.nn as nn
             total_bytes = sum(
-                v.nbytes for _, _, v in nn.utils.tree_flatten(self.model.parameters())
+                v.nbytes for _, v in nn.utils.tree_flatten(self.model.parameters())
             )
             return total_bytes // 1024 // 1024
         except Exception:
