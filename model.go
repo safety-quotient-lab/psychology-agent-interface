@@ -1860,6 +1860,37 @@ Hard refusals:
 // fewShotPriming returns example user/assistant exchanges that demonstrate
 // the expected output format for the model's tier. Small models learn format
 // from conversation history more reliably than from system prompt rules alone.
+
+// formatReminder returns a compact format reminder appended to the end of the
+// system prompt. Placed last so it sits closest to the conversation, helping
+// small models retain format compliance across turns.
+func formatReminder(model string) string {
+	switch {
+	case isTier1(model):
+		return "\n\nReminder: Always use [observation] and [inference] tags. End with Confidence: high/moderate/low."
+	case isTier2(model):
+		return "\n\nReminder: Always use [OBS] and [INF] tags. End with Confidence: HIGH/MODERATE/LOW — [basis]."
+	default:
+		return ""
+	}
+}
+
+func isTier1(model string) bool {
+	switch model {
+	case "qwen-0.5b", "qwen-1.5b", "llama-1b", "smollm2":
+		return true
+	}
+	return false
+}
+
+func isTier2(model string) bool {
+	switch model {
+	case "qwen-3b", "llama-3b", "gemma-2b":
+		return true
+	}
+	return false
+}
+
 func fewShotPriming(model string) []Message {
 	switch model {
 	case "qwen-3b", "llama-3b", "gemma-2b":
@@ -1939,6 +1970,7 @@ When finished, write your final answer with no TOOL_CALL lines.`
 	if claudeMD != "" {
 		s += "\n\n# Project instructions\n" + claudeMD
 	}
+	s += formatReminder(model)
 	return s
 }
 
@@ -1960,5 +1992,6 @@ Use tools when you need to investigate files or run commands.`
 	if claudeMD != "" {
 		s += "\n\n# Project instructions\n" + claudeMD
 	}
+	s += formatReminder(model)
 	return s
 }
