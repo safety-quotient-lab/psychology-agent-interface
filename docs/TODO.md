@@ -15,6 +15,13 @@
       gates dangerous ops through user approval. Original fix (f3fda40) intact
       through all Plan 9 refactors.
 
+## Inference
+
+- [x] **Stop generation after tool call** — Fixed (eead6ef). llama-1b hallucinated
+      fake TOOL_RESULT text after emitting TOOL_CALL, causing TUI hang. Added
+      `StoppingCriteria` in sidecar (`llm-serve.py`) that halts generation once
+      a complete tool call appears. Stronger ReAct prompt instruction added.
+
 ## Context Management
 
 - [x] **Context compaction tuning for Tier 1** — Done (39cfa54). Per-model
