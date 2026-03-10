@@ -9,14 +9,12 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/msg"
 )
 
-// Message mirrors the main package's Message type.
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Name    string `json:"name,omitempty"`
-}
+// Message is an alias for the shared msg.Message type.
+type Message = msg.Message
 
 // Meta holds session metadata.
 type Meta struct {

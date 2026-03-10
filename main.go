@@ -560,7 +560,7 @@ func run(c appConfig) error {
 			return err
 		}
 		if m, ok := finalModel.(Model); ok && len(m.conversation) > 1 {
-			jsonlPath, jerr := session.ExportJSONL(m.modelName, sessionMsgsFromMain(m.conversation), c.cwd)
+			jsonlPath, jerr := session.ExportJSONL(m.modelName, m.conversation, c.cwd)
 			if jerr == nil {
 				htmlPath := strings.TrimSuffix(jsonlPath, ".jsonl") + ".html"
 				title := fmt.Sprintf("pai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))
@@ -611,7 +611,7 @@ func run(c appConfig) error {
 
 	// Generate a session replay after the TUI exits.
 	if m, ok := finalModel.(Model); ok && len(m.conversation) > 1 {
-		jsonlPath, jerr := session.ExportJSONL(m.modelName, sessionMsgsFromMain(m.conversation), c.cwd)
+		jsonlPath, jerr := session.ExportJSONL(m.modelName, m.conversation, c.cwd)
 		if jerr == nil {
 			htmlPath := strings.TrimSuffix(jsonlPath, ".jsonl") + ".html"
 			title := fmt.Sprintf("pai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))

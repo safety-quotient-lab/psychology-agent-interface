@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/reflow/wordwrap"
 	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/msg"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/prompt"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/session"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/style"
@@ -164,12 +165,8 @@ type msgReviewDone struct {
 	reply   string
 }
 
-// Message is a conversation turn sent to the sidecar.
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Name    string `json:"name,omitempty"`
-}
+// Message is an alias for the shared msg.Message type.
+type Message = msg.Message
 
 // Model metadata (selectable models, context limits, tier info) now lives in
 // models.json and loads into cfg.catalog at startup. See pkg/catalog.
@@ -446,47 +443,10 @@ func (m *Model) buildPriming() []prompt.Message {
 	return priming
 }
 
-// sessionMsgsFromMain converts main-package Message slices to session.Message slices.
-func sessionMsgsFromMain(msgs []Message) []session.Message {
-	out := make([]session.Message, len(msgs))
-	for i, m := range msgs {
-		out[i] = session.Message{Role: m.Role, Content: m.Content, Name: m.Name}
-	}
-	return out
-}
-
-// sessionMsgsToMain converts session.Message slices to main-package Message slices.
-func sessionMsgsToMain(smsgs []session.Message) []Message {
-	out := make([]Message, len(smsgs))
-	for i, sm := range smsgs {
-		out[i] = Message{Role: sm.Role, Content: sm.Content, Name: sm.Name}
-	}
-	return out
-}
-
-// promptMsgsToMain converts prompt.Message slices to main-package Message slices.
-func promptMsgsToMain(pmsgs []prompt.Message) []Message {
-	out := make([]Message, len(pmsgs))
-	for i, pm := range pmsgs {
-		out[i] = Message{Role: pm.Role, Content: pm.Content, Name: pm.Name}
-	}
-	return out
-}
-
-// mainMsgsToPrompt converts main-package Message slices to prompt.Message slices.
-func mainMsgsToPrompt(msgs []Message) []prompt.Message {
-	out := make([]prompt.Message, len(msgs))
-	for i, m := range msgs {
-		out[i] = prompt.Message{Role: m.Role, Content: m.Content, Name: m.Name}
-	}
-	return out
-}
-
 // msgsWithFormatNudge returns a copy of the conversation with a transient
 // format reminder appended. The original slice remains unmodified.
 func (m *Model) msgsWithFormatNudge(conv []Message) []Message {
-	nudged := m.ns.WithNudge(mainMsgsToPrompt(conv), m.modelTier())
-	return promptMsgsToMain(nudged)
+	return m.ns.WithNudge(conv, m.modelTier())
 }
 
 func cmdShellDirect(text, cwd string) tea.Cmd {
@@ -673,7 +633,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conversation[0].Content = m.buildSystemPrompt()
 		// Few-shot example right after system prompt so small models
 		// see the expected output format before any real user messages.
-		m.conversation = append(m.conversation, promptMsgsToMain(m.buildPriming())...)
+		m.conversation = append(m.conversation, m.buildPriming()...)
 
 		// Now allow user input
 		m.state = stateInput
@@ -1406,7 +1366,7 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 		}
 
 	case "/export":
-		path, err := session.ExportMarkdown(m.modelName, sessionMsgsFromMain(m.conversation), m.cfg.cwd)
+		path, err := session.ExportMarkdown(m.modelName, m.conversation, m.cfg.cwd)
 		if err != nil {
 			m.displayLines = append(m.displayLines, style.Error.Render("export failed: "+err.Error()))
 		} else {
@@ -1449,7 +1409,7 @@ func (m *Model) handleSession(parts []string) {
 	}
 	switch parts[1] {
 	case "save":
-		path, err := session.Save(m.modelName, sessionMsgsFromMain(m.conversation))
+		path, err := session.Save(m.modelName, m.conversation)
 		if err != nil {
 			m.displayLines = append(m.displayLines, style.Error.Render("save failed: "+err.Error()))
 		} else {
@@ -1484,7 +1444,7 @@ func (m *Model) handleSession(parts []string) {
 			return
 		}
 		m.resetToolState()
-		m.conversation = sessionMsgsToMain(s.Conversation)
+		m.conversation = s.Conversation
 		m.displayLines = append(m.displayLines,
 			style.Dim.Render(fmt.Sprintf("loaded: %s [%s] %d msgs", s.ID, s.Model, len(s.Conversation))))
 		if s.Model != m.modelName {

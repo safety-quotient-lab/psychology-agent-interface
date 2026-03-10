@@ -4,15 +4,14 @@
 // Plan 9 Phase 2: per-process namespaces.
 package prompt
 
-import "strings"
+import (
+	"strings"
 
-// Message mirrors the main package's Message type.
-// Defined here so prompt stays dependency-free.
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Name    string `json:"name,omitempty"`
-}
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/msg"
+)
+
+// Message is an alias for the shared msg.Message type.
+type Message = msg.Message
 
 // Namespace assembles a complete system prompt from independent resources.
 // Each resource provides content without knowing about the others.

@@ -6,22 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
-)
 
-var (
-	nativeStripRe = regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>`)
-	reactStripRe  = regexp.MustCompile(`(?s)TOOL_CALL:\s*\{.*?\}`)
+	pmsg "github.com/safety-quotient-lab/psychology-agent-interface/pkg/msg"
 )
-
-// stripMarkup removes tool call markup from assistant text.
-func stripMarkup(text string) string {
-	text = nativeStripRe.ReplaceAllString(text, "")
-	text = reactStripRe.ReplaceAllString(text, "")
-	return strings.TrimSpace(text)
-}
 
 // ExportJSONL writes the conversation as a Claude Code-compatible JSONL file
 // so claude-replay can generate an HTML replay from it.
@@ -76,7 +65,7 @@ func ExportJSONL(model string, conv []Message, cwd string) (string, error) {
 			content = fmt.Sprintf("[tool result: %s]\n%s", msg.Name, msg.Content)
 		case "assistant":
 			roleType = "assistant"
-			clean := stripMarkup(msg.Content)
+			clean := pmsg.StripMarkup(msg.Content)
 			if clean == "" {
 				clean = msg.Content
 			}
@@ -144,7 +133,7 @@ func ExportMarkdown(model string, conv []Message, cwd string) (string, error) {
 				sb.WriteString(fmt.Sprintf("*[tool result — %s]*\n\n", msg.Name))
 			}
 		case "assistant":
-			clean := stripMarkup(msg.Content)
+			clean := pmsg.StripMarkup(msg.Content)
 			if clean == "" {
 				clean = msg.Content
 			}

@@ -51,7 +51,7 @@ func runPrint(c appConfig, proc inferProc) error {
 	sysprompt, priming := ns.Build(tier, useNative)
 
 	msgs := []Message{{Role: "system", Content: sysprompt}}
-	msgs = append(msgs, promptMsgsToMain(priming)...)
+	msgs = append(msgs, priming...)
 	msgs = append(msgs, Message{Role: "user", Content: userPrompt})
 
 	maxTurns := c.maxTurns
@@ -61,8 +61,7 @@ func runPrint(c appConfig, proc inferProc) error {
 
 	// nudge wraps msgs with per-turn format reinforcement.
 	nudge := func(conv []Message) []Message {
-		nudged := ns.WithNudge(mainMsgsToPrompt(conv), tier)
-		return promptMsgsToMain(nudged)
+		return ns.WithNudge(conv, tier)
 	}
 
 	lp, canStream := proc.(*llmProc)

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/msg"
 )
 
 // ToolCall represents a parsed tool invocation.
@@ -58,14 +60,5 @@ func parseReact(text string) []ToolCall {
 	return calls
 }
 
-var (
-	nativeStripRe = regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>`)
-	reactStripRe  = regexp.MustCompile(`(?s)TOOL_CALL:\s*\{.*?\}`)
-)
-
 // stripMarkup removes tool call markup from assistant text.
-func stripMarkup(text string) string {
-	text = nativeStripRe.ReplaceAllString(text, "")
-	text = reactStripRe.ReplaceAllString(text, "")
-	return strings.TrimSpace(text)
-}
+var stripMarkup = msg.StripMarkup
