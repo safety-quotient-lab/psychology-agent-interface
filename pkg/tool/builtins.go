@@ -300,8 +300,24 @@ func RegisterBuiltins(r *Registry, kagiKey string) {
 	})
 }
 
+// ambiguousWords lists common English words that exist as commands on PATH.
+// These get excluded from shell detection to prevent natural language input
+// from accidentally running as commands.
+var ambiguousWords = map[string]bool{
+	"what": true, "which": true, "who": true, "where": true, "how": true,
+	"time": true, "test": true, "read": true, "make": true, "file": true,
+	"find": true, "head": true, "sort": true, "yes": true, "true": true,
+	"false": true, "do": true, "look": true, "tell": true, "help": true,
+	"open": true, "more": true, "less": true, "last": true, "nice": true,
+	"wait": true, "write": true, "type": true, "select": true, "split": true,
+	"join": true, "fold": true, "paste": true, "touch": true, "cal": true,
+	"date": true, "sleep": true, "kill": true, "env": true, "id": true,
+	"sum": true, "factor": true, "fmt": true, "can": true,
+}
+
 // IsShellCommand returns true if the first word of text appears on PATH
-// or starts with ./ or /.
+// or starts with ./ or /. Excludes common English words that exist as
+// commands to prevent natural language from running as shell commands.
 func IsShellCommand(text string) bool {
 	fields := strings.Fields(text)
 	if len(fields) == 0 {
@@ -310,6 +326,9 @@ func IsShellCommand(text string) bool {
 	word := fields[0]
 	if strings.HasPrefix(word, "./") || strings.HasPrefix(word, "/") {
 		return true
+	}
+	if ambiguousWords[strings.ToLower(word)] {
+		return false
 	}
 	_, err := exec.LookPath(word)
 	return err == nil

@@ -1649,6 +1649,10 @@ func (m *Model) syncViewport() {
 	if !m.vpReady {
 		return
 	}
+	// Ensure textarea has focus whenever we return to an input-accepting state.
+	if m.state == stateInput || m.state == stateAskUser {
+		m.input.Focus()
+	}
 	m.vp.Height = m.chatHeight()
 
 	// Track whether the user has scrolled up before we overwrite content.
