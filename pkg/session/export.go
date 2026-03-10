@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"encoding/json"
@@ -6,86 +6,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"regexp"
 	"strings"
 	"time"
 )
 
-// Session is a saved conversation snapshot.
-type Session struct {
-	ID           string    `json:"id"`
-	Model        string    `json:"model"`
-	SavedAt      time.Time `json:"saved_at"`
-	Conversation []Message `json:"conversation"`
+var (
+	nativeStripRe = regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>`)
+	reactStripRe  = regexp.MustCompile(`(?s)TOOL_CALL:\s*\{.*?\}`)
+)
+
+// stripMarkup removes tool call markup from assistant text.
+func stripMarkup(text string) string {
+	text = nativeStripRe.ReplaceAllString(text, "")
+	text = reactStripRe.ReplaceAllString(text, "")
+	return strings.TrimSpace(text)
 }
 
-func sessionDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(home, ".local", "share", "pai", "sessions")
-	return dir, os.MkdirAll(dir, 0755)
-}
-
-func saveSession(model string, conv []Message) (string, error) {
-	dir, err := sessionDir()
-	if err != nil {
-		return "", err
-	}
-	id := time.Now().Format("20060102-150405")
-	s := Session{ID: id, Model: model, SavedAt: time.Now(), Conversation: conv}
-	b, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, id+".json")
-	return path, os.WriteFile(path, b, 0644)
-}
-
-func listSessions() ([]Session, error) {
-	dir, err := sessionDir()
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var sessions []Session
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var s Session
-		if json.Unmarshal(data, &s) == nil {
-			sessions = append(sessions, s)
-		}
-	}
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].SavedAt.After(sessions[j].SavedAt)
-	})
-	return sessions, nil
-}
-
-func loadSessionByIndex(n int) (Session, error) {
-	sessions, err := listSessions()
-	if err != nil {
-		return Session{}, err
-	}
-	if n < 1 || n > len(sessions) {
-		return Session{}, os.ErrNotExist
-	}
-	return sessions[n-1], nil
-}
-
-// exportJSONL writes the conversation as a Claude Code-compatible JSONL file
+// ExportJSONL writes the conversation as a Claude Code-compatible JSONL file
 // so claude-replay can generate an HTML replay from it.
-func exportJSONL(model string, conv []Message, cwd string) (string, error) {
+func ExportJSONL(model string, conv []Message, cwd string) (string, error) {
 	ts := time.Now().Format("20060102-150405")
 	fname := "session-" + ts + ".jsonl"
 	path := filepath.Join(cwd, fname)
@@ -99,7 +39,6 @@ func exportJSONL(model string, conv []Message, cwd string) (string, error) {
 	enc := json.NewEncoder(f)
 	sessionID := ts
 
-	// Build a fake project-slug from cwd (mirrors Claude Code convention)
 	slug := strings.ReplaceAll(cwd, "/", "-")
 
 	var prevUUID string
@@ -128,7 +67,6 @@ func exportJSONL(model string, conv []Message, cwd string) (string, error) {
 		case "user":
 			roleType = "user"
 			if msg.Name != "" {
-				// Tool result — show as tool output block
 				content = fmt.Sprintf("[tool result: %s]\n%s", msg.Name, msg.Content)
 			} else {
 				content = msg.Content
@@ -148,14 +86,14 @@ func exportJSONL(model string, conv []Message, cwd string) (string, error) {
 		}
 
 		line := map[string]interface{}{
-			"parentUuid": parentUUID,
+			"parentUuid":  parentUUID,
 			"isSidechain": false,
-			"userType":   "external",
-			"cwd":        cwd,
-			"sessionId":  sessionID,
-			"version":    "pai",
-			"gitBranch":  "main",
-			"type":       roleType,
+			"userType":    "external",
+			"cwd":         cwd,
+			"sessionId":   sessionID,
+			"version":     "pai",
+			"gitBranch":   "main",
+			"type":        roleType,
 			"message": map[string]interface{}{
 				"role":    msg.Role,
 				"content": content,
@@ -175,9 +113,8 @@ func exportJSONL(model string, conv []Message, cwd string) (string, error) {
 	return path, nil
 }
 
-// generateReplay runs claude-replay on jsonlPath and writes HTML to htmlPath.
-// Returns the HTML path on success.
-func generateReplay(jsonlPath, htmlPath, title string) error {
+// GenerateReplay runs claude-replay on jsonlPath and writes HTML to htmlPath.
+func GenerateReplay(jsonlPath, htmlPath, title string) error {
 	cmd := exec.Command("claude-replay", jsonlPath,
 		"--theme", "tokyo-night",
 		"--title", title,
@@ -186,9 +123,8 @@ func generateReplay(jsonlPath, htmlPath, title string) error {
 	return cmd.Run()
 }
 
-// exportMarkdown writes the conversation as a Markdown file to cwd.
-// Returns the path of the written file.
-func exportMarkdown(model string, conv []Message, cwd string) (string, error) {
+// ExportMarkdown writes the conversation as a Markdown file to cwd.
+func ExportMarkdown(model string, conv []Message, cwd string) (string, error) {
 	ts := time.Now().Format("20060102-150405")
 	fname := "session-" + ts + ".md"
 	path := filepath.Join(cwd, fname)

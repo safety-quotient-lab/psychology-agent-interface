@@ -20,6 +20,7 @@ import (
 	"github.com/muesli/reflow/wordwrap"
 	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/prompt"
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/session"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/style"
 )
 
@@ -443,6 +444,24 @@ func (m *Model) buildSystemPrompt() string {
 func (m *Model) buildPriming() []prompt.Message {
 	_, priming := m.ns.Build(m.modelTier(), m.useNative)
 	return priming
+}
+
+// sessionMsgsFromMain converts main-package Message slices to session.Message slices.
+func sessionMsgsFromMain(msgs []Message) []session.Message {
+	out := make([]session.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = session.Message{Role: m.Role, Content: m.Content, Name: m.Name}
+	}
+	return out
+}
+
+// sessionMsgsToMain converts session.Message slices to main-package Message slices.
+func sessionMsgsToMain(smsgs []session.Message) []Message {
+	out := make([]Message, len(smsgs))
+	for i, sm := range smsgs {
+		out[i] = Message{Role: sm.Role, Content: sm.Content, Name: sm.Name}
+	}
+	return out
 }
 
 // promptMsgsToMain converts prompt.Message slices to main-package Message slices.
@@ -1387,7 +1406,7 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 		}
 
 	case "/export":
-		path, err := exportMarkdown(m.modelName, m.conversation, m.cfg.cwd)
+		path, err := session.ExportMarkdown(m.modelName, sessionMsgsFromMain(m.conversation), m.cfg.cwd)
 		if err != nil {
 			m.displayLines = append(m.displayLines, style.Error.Render("export failed: "+err.Error()))
 		} else {
@@ -1430,14 +1449,14 @@ func (m *Model) handleSession(parts []string) {
 	}
 	switch parts[1] {
 	case "save":
-		path, err := saveSession(m.modelName, m.conversation)
+		path, err := session.Save(m.modelName, sessionMsgsFromMain(m.conversation))
 		if err != nil {
 			m.displayLines = append(m.displayLines, style.Error.Render("save failed: "+err.Error()))
 		} else {
 			m.displayLines = append(m.displayLines, style.Dim.Render("saved: "+path))
 		}
 	case "list":
-		sessions, err := listSessions()
+		sessions, err := session.List()
 		if err != nil {
 			m.displayLines = append(m.displayLines, style.Error.Render("list failed: "+err.Error()))
 		} else if len(sessions) == 0 {
@@ -1459,13 +1478,13 @@ func (m *Model) handleSession(parts []string) {
 			m.displayLines = append(m.displayLines, style.Warning.Render("invalid session number"))
 			return
 		}
-		s, err := loadSessionByIndex(n)
+		s, err := session.LoadByIndex(n)
 		if err != nil {
 			m.displayLines = append(m.displayLines, style.Error.Render("session not found"))
 			return
 		}
 		m.resetToolState()
-		m.conversation = s.Conversation
+		m.conversation = sessionMsgsToMain(s.Conversation)
 		m.displayLines = append(m.displayLines,
 			style.Dim.Render(fmt.Sprintf("loaded: %s [%s] %d msgs", s.ID, s.Model, len(s.Conversation))))
 		if s.Model != m.modelName {

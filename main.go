@@ -22,6 +22,7 @@ import (
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/config"
 	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/prompt"
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/session"
 	"github.com/spf13/cobra"
 )
 
@@ -559,11 +560,11 @@ func run(c appConfig) error {
 			return err
 		}
 		if m, ok := finalModel.(Model); ok && len(m.conversation) > 1 {
-			jsonlPath, jerr := exportJSONL(m.modelName, m.conversation, c.cwd)
+			jsonlPath, jerr := session.ExportJSONL(m.modelName, sessionMsgsFromMain(m.conversation), c.cwd)
 			if jerr == nil {
 				htmlPath := strings.TrimSuffix(jsonlPath, ".jsonl") + ".html"
 				title := fmt.Sprintf("pai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))
-				if rerr := generateReplay(jsonlPath, htmlPath, title); rerr == nil {
+				if rerr := session.GenerateReplay(jsonlPath, htmlPath, title); rerr == nil {
 					fmt.Fprintf(os.Stderr, "\n🎬  session replay: file://%s\n", htmlPath)
 				}
 			}
@@ -610,11 +611,11 @@ func run(c appConfig) error {
 
 	// Generate a session replay after the TUI exits.
 	if m, ok := finalModel.(Model); ok && len(m.conversation) > 1 {
-		jsonlPath, jerr := exportJSONL(m.modelName, m.conversation, c.cwd)
+		jsonlPath, jerr := session.ExportJSONL(m.modelName, sessionMsgsFromMain(m.conversation), c.cwd)
 		if jerr == nil {
 			htmlPath := strings.TrimSuffix(jsonlPath, ".jsonl") + ".html"
 			title := fmt.Sprintf("pai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))
-			if rerr := generateReplay(jsonlPath, htmlPath, title); rerr == nil {
+			if rerr := session.GenerateReplay(jsonlPath, htmlPath, title); rerr == nil {
 				fmt.Fprintf(os.Stderr, "\n🎬  session replay: file://%s\n", htmlPath)
 			}
 		}
