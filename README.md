@@ -1,4 +1,4 @@
-# psyai
+# pai
 
 Socratic psychology agent interface — local LLM-powered structured inquiry.
 
@@ -10,7 +10,7 @@ distilled for small local models.
 ## Architecture
 
 ```
-psyai (Go TUI)  ←──JSON-lines stdio──→  scripts/llm-serve.py (Python sidecar)
+pai (Go TUI)  ←──JSON-lines stdio──→  scripts/llm-serve.py (Python sidecar)
 ```
 
 The Go binary handles the TUI, tools, parsing, and conversation management.
@@ -62,14 +62,14 @@ The core interaction pattern uses Socratic questioning:
 ## Build & Run
 
 ```bash
-go build -o psyai .
-./psyai --model qwen-3b --cwd /path/to/project
+go build -o pai .
+./pai --model qwen-1.5b --cwd /path/to/project
 ```
 
 ## Flags
 
 ```
---model/-m      Model key (default: qwen-3b)
+--model/-m      Model key (default: qwen-1.5b)
 --cwd/-C        Working directory for tools (default: cwd)
 --max-turns/-n  Tool-call limit per exchange (default: 15)
 --yes/-y        Auto-approve all tool calls

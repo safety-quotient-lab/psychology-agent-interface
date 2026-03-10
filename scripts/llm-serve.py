@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-llm-serve.py — Persistent LLM sidecar for psyai (Go TUI).
+llm-serve.py — Persistent LLM sidecar for pai (Go TUI).
 
 Loads a model once, keeps it in VRAM, and serves inference requests
 via newline-delimited JSON on stdin/stdout.
@@ -295,7 +295,7 @@ def main():
     import warnings
     warnings.filterwarnings("ignore")
 
-    ap = argparse.ArgumentParser(description="LLM sidecar for psyai")
+    ap = argparse.ArgumentParser(description="LLM sidecar for pai")
     ap.add_argument("--model", "-m", default="qwen-1.5b", choices=list(MODELS))
     ap.add_argument("--quant", "-q", default=None, choices=["4bit", "8bit"],
                     help="Quantization: 4bit (~1.7GB for 3b) or 8bit (~3.5GB for 3b)")

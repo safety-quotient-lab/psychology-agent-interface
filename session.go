@@ -24,7 +24,7 @@ func sessionDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".local", "share", "psyai", "sessions")
+	dir := filepath.Join(home, ".local", "share", "pai", "sessions")
 	return dir, os.MkdirAll(dir, 0755)
 }
 
@@ -153,7 +153,7 @@ func exportJSONL(model string, conv []Message, cwd string) (string, error) {
 			"userType":   "external",
 			"cwd":        cwd,
 			"sessionId":  sessionID,
-			"version":    "psyai",
+			"version":    "pai",
 			"gitBranch":  "main",
 			"type":       roleType,
 			"message": map[string]interface{}{
@@ -194,7 +194,7 @@ func exportMarkdown(model string, conv []Message, cwd string) (string, error) {
 	path := filepath.Join(cwd, fname)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# psyai session — %s — %s\n\n",
+	sb.WriteString(fmt.Sprintf("# pai session — %s — %s\n\n",
 		model, time.Now().Format("2006-01-02 15:04:05")))
 
 	for _, msg := range conv {

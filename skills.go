@@ -23,13 +23,13 @@ type Skill struct {
 //
 // Config locations (loaded in order, later overrides earlier):
 //
-//	~/.config/psyai/skills.json   — global skills
-//	<cwd>/psyai-skills.json        — project-local skills
+//	~/.config/pai/skills.json   — global skills
+//	<cwd>/pai-skills.json        — project-local skills
 func loadSkills(cwd string) []Skill {
 	home, _ := os.UserHomeDir()
 	paths := []string{
-		filepath.Join(home, ".config", "psyai", "skills.json"),
-		filepath.Join(cwd, "psyai-skills.json"),
+		filepath.Join(home, ".config", "pai", "skills.json"),
+		filepath.Join(cwd, "pai-skills.json"),
 	}
 	var skills []Skill
 	for _, path := range paths {

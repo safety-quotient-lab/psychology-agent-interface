@@ -1340,7 +1340,7 @@ func (m *Model) handleSkill(parts []string) {
 		if len(m.skills) == 0 {
 			m.displayLines = append(m.displayLines,
 				style.Dim.Render("no skills loaded"),
-				style.Dim.Render("  create ~/.config/psyai/skills.json or <cwd>/psyai-skills.json"),
+				style.Dim.Render("  create ~/.config/pai/skills.json or <cwd>/pai-skills.json"),
 				style.Dim.Render(`  format: [{"id":"...","name":"...","description":"...","system_prompt":"..."}]`),
 			)
 			return
@@ -1483,7 +1483,7 @@ func (m Model) View() string {
 	if m.modelName != "" {
 		modelLabel = "[" + m.modelName + "]  "
 	}
-	header := style.Title.Width(m.width).Render(" psyai  " + modelLabel + m.cfg.cwd + " ")
+	header := style.Title.Width(m.width).Render(" pai  " + modelLabel + m.cfg.cwd + " ")
 
 	var statusLine string
 	switch m.state {
@@ -1536,7 +1536,7 @@ func (m Model) renderModelSelector() string {
 
 // renderModelSelectorFull renders the model picker using the full viewport dimensions.
 func (m Model) renderModelSelectorFull() string {
-	header := style.Title.Width(m.width).Render(" psyai  select a model ")
+	header := style.Title.Width(m.width).Render(" pai  select a model ")
 	content := m.renderModelPicker(m.height - 4)
 	hint := style.Dim.Render("  ↑/↓ navigate · Enter select · Esc " +
 		func() string {

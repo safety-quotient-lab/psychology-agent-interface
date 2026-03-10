@@ -1,4 +1,4 @@
-// Package main implements psyai: a Socratic psychology agent interface backed by local LLMs.
+// Package main implements pai: a Socratic psychology agent interface backed by local LLMs.
 // The LLM inference runs in a persistent Python sidecar (scripts/llm-serve.py)
 // that keeps the model in VRAM between turns, or via an HTTP gateway.
 package main
@@ -456,7 +456,7 @@ type appConfig struct {
 func main() {
 	var c appConfig
 	root := &cobra.Command{
-		Use:   "psyai [prompt...]",
+		Use:   "pai [prompt...]",
 		Short: "Socratic psychology agent interface with local LLM",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -468,7 +468,7 @@ func main() {
 			return run(c)
 		},
 	}
-	root.Flags().StringVarP(&c.model, "model", "m", "qwen-3b",
+	root.Flags().StringVarP(&c.model, "model", "m", "qwen-1.5b",
 		"Model key (qwen-0.5b, qwen-1.5b, qwen-3b, smollm2, gemma-2b, llama-1b, llama-3b)")
 	root.Flags().StringVarP(&c.cwd, "cwd", "C", mustGetwd(),
 		"Working directory for tools")
@@ -530,7 +530,7 @@ func run(c appConfig) error {
 			jsonlPath, jerr := exportJSONL(m.modelName, m.conversation, c.cwd)
 			if jerr == nil {
 				htmlPath := strings.TrimSuffix(jsonlPath, ".jsonl") + ".html"
-				title := fmt.Sprintf("psyai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))
+				title := fmt.Sprintf("pai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))
 				if rerr := generateReplay(jsonlPath, htmlPath, title); rerr == nil {
 					fmt.Fprintf(os.Stderr, "\n🎬  session replay: file://%s\n", htmlPath)
 				}
@@ -586,7 +586,7 @@ func run(c appConfig) error {
 		jsonlPath, jerr := exportJSONL(m.modelName, m.conversation, c.cwd)
 		if jerr == nil {
 			htmlPath := strings.TrimSuffix(jsonlPath, ".jsonl") + ".html"
-			title := fmt.Sprintf("psyai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))
+			title := fmt.Sprintf("pai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))
 			if rerr := generateReplay(jsonlPath, htmlPath, title); rerr == nil {
 				fmt.Fprintf(os.Stderr, "\n🎬  session replay: file://%s\n", htmlPath)
 			}
@@ -602,7 +602,7 @@ func mustGetwd() string {
 }
 
 func findProjectRoot() string {
-	// Prefer the directory containing the executable — works when psyai is on PATH.
+	// Prefer the directory containing the executable — works when pai is on PATH.
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		if _, err := os.Stat(filepath.Join(dir, "scripts", "llm-serve.py")); err == nil {
