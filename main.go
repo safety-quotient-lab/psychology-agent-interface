@@ -48,6 +48,7 @@ type llmProc struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
+	stderr *bytes.Buffer // captured stderr for error reporting
 }
 
 // startSidecar starts scripts/llm-serve.py and creates JSON-lines pipes.
@@ -62,7 +63,8 @@ func startSidecarQuant(model, projectRoot, quant string) (*llmProc, error) {
 		args = append(args, "--quant", quant)
 	}
 	cmd := exec.Command("python3", args...)
-	cmd.Stderr = os.Stderr // forward Python stderr so GPU errors are visible
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -79,7 +81,7 @@ func startSidecarQuant(model, projectRoot, quant string) (*llmProc, error) {
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1<<20), 1<<20) // 1 MB — handles large replies
 
-	return &llmProc{cmd: cmd, stdin: stdin, stdout: sc}, nil
+	return &llmProc{cmd: cmd, stdin: stdin, stdout: sc, stderr: &stderrBuf}, nil
 }
 
 // readReady reads the startup handshake from the sidecar (blocking).
@@ -98,7 +100,20 @@ func (p *llmProc) readReady() (readyPayload, error) {
 	if err := p.stdout.Err(); err != nil {
 		return readyPayload{}, fmt.Errorf("sidecar read: %w", err)
 	}
-	return readyPayload{}, fmt.Errorf("sidecar closed before ready")
+	return readyPayload{}, fmt.Errorf("sidecar closed before ready: %s", p.lastStderrLine())
+}
+
+// lastStderrLine returns the last non-empty line from captured stderr,
+// providing a concise error summary when the sidecar crashes.
+func (p *llmProc) lastStderrLine() string {
+	lines := strings.Split(strings.TrimSpace(p.stderr.String()), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+	return "(no stderr output)"
 }
 
 // sendInfer sends one inference request and reads the response (blocking).

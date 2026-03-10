@@ -347,7 +347,7 @@ func cmdReadLoadLine(proc inferProc) tea.Cmd {
 	}
 	return func() tea.Msg {
 		if !lp.stdout.Scan() {
-			return msgServerError{fmt.Errorf("sidecar closed during load")}
+			return msgServerError{fmt.Errorf("sidecar closed during load: %s", lp.lastStderrLine())}
 		}
 		raw := lp.stdout.Bytes()
 		// Try progress line first
