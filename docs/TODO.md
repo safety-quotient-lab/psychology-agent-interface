@@ -15,12 +15,10 @@
 
 ## Context Management
 
-- [ ] **Context compaction tuning for Tier 1** — Small models (<=2B) degrade past
-      ~2-4K tokens. Tune the compaction/summary trigger threshold so it fires
-      earlier for Tier 1, preserving coherence across longer sessions.
-- [ ] **Token budget / context overflow guard** — smollm2 and gemma-2b have 8K
-      context limits. The sidecar does not cap input context. Add a guard that
-      truncates or compacts before exceeding the model's declared max context.
+- [x] **Context compaction tuning for Tier 1** — Done (39cfa54). Per-model
+      conservative limits trigger early compaction (4K for qwen-0.5b/smollm2/gemma-2b).
+- [x] **Token budget / context overflow guard** — Done (39cfa54). estimateTokens()
+      checks conversation size before each inference; compacts when approaching limit.
 
 ## iOS Port
 
