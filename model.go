@@ -96,9 +96,23 @@ const (
 
 // context compaction constants
 const (
-	compactThreshold = 24 // compact when conversation exceeds this many messages
-	compactKeep      = 16 // keep this many recent messages after compaction
+	compactThreshold = 24   // compact when conversation exceeds this many messages
+	compactKeep      = 16   // keep this many recent messages after compaction
+	tokenReserve     = 1200 // tokens reserved for model response + overhead
 )
+
+// modelContextLimit returns the safe input token limit for a model.
+// Uses conservative limits well below declared max, since small models
+// degrade in quality before hitting the hard context ceiling.
+var modelContextLimit = map[string]int{
+	"qwen-0.5b": 4096,   // declared 32K, effective ~4K
+	"qwen-1.5b": 8192,   // declared 32K, effective ~8K
+	"qwen-3b":   16384,  // declared 32K
+	"smollm2":   4096,   // declared 8K, effective ~4K
+	"gemma-2b":  4096,   // declared 8K, effective ~4K
+	"llama-1b":  8192,   // declared 128K, effective ~8K
+	"llama-3b":  16384,  // declared 128K
+}
 
 // Custom tea.Msg types --------------------------------------------------------
 
@@ -1174,10 +1188,30 @@ func (m *Model) finishToolBatch() tea.Cmd {
 
 // Context compaction ----------------------------------------------------------
 
-// compactIfNeeded trims the conversation if it exceeds compactThreshold.
-// Returns the removed messages (nil if no compaction was needed).
+// estimateTokens returns a rough token count for a conversation.
+// Uses ~4 chars per token as a conservative estimate for English text.
+func estimateTokens(conv []Message) int {
+	total := 0
+	for _, msg := range conv {
+		total += len(msg.Content)/4 + 4 // +4 for role/framing overhead per message
+	}
+	return total
+}
+
+// compactIfNeeded trims the conversation when it exceeds the message count
+// threshold OR the model's context token limit. Returns removed messages
+// (nil if no compaction was needed).
 func (m *Model) compactIfNeeded() []Message {
-	if len(m.conversation) <= compactThreshold {
+	needsCompact := len(m.conversation) > compactThreshold
+
+	// Also compact if estimated tokens approach the model's context limit.
+	if limit, ok := modelContextLimit[m.modelName]; ok {
+		if estimateTokens(m.conversation) > limit-tokenReserve {
+			needsCompact = true
+		}
+	}
+
+	if !needsCompact {
 		return nil
 	}
 	start := 0
