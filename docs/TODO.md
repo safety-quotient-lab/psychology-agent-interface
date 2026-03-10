@@ -16,6 +16,13 @@
 - [x] **Token budget / context overflow guard** — Done (39cfa54). estimateTokens()
       checks conversation size before each inference; compacts when approaching limit.
 
+## TUI
+
+- [ ] **Fix mouse text selection** — Users cannot select text in the TUI for
+      copy/paste. Likely a bubbletea mouse event capture conflict. Investigate
+      whether disabling mouse reporting or switching to a zone-based approach
+      restores native terminal selection.
+
 ## iOS Port
 
 - [ ] **Extract `SystemPromptProvider` interface** — Decouple prompt content from
