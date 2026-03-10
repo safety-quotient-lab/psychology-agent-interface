@@ -169,16 +169,18 @@ type modelInfo struct {
 	label string // display label
 	tier  string // psychology prompt tier
 	vram  string // approximate VRAM usage
+	ctx   string // context window size
+	note  string // extra info (gated, speed, etc.)
 }
 
 var selectableModels = []modelInfo{
-	{"qwen-0.5b", "Qwen 2.5 0.5B", "Tier 1 (≤2B)", "~1 GB  ★ fast"},
-	{"qwen-1.5b", "Qwen 2.5 1.5B", "Tier 1 (≤2B)", "~3 GB"},
-	{"smollm2", "SmolLM2 1.7B", "Tier 1 (≤2B)", "~3 GB"},
-	{"llama-1b", "Llama 3.2 1B", "Tier 1 (≤2B)", "~2 GB"},
-	{"qwen-3b", "Qwen 2.5 3B", "Tier 2 (2B–4B)", "~5.6 GB"},
-	{"gemma-2b", "Gemma 2 2B", "Tier 2 (2B–4B)", "~4 GB"},
-	{"llama-3b", "Llama 3.2 3B", "Tier 2 (2B–4B)", "~6 GB"},
+	{"qwen-0.5b", "Qwen 2.5 0.5B", "Tier 1", "~1 GB", "32K", "★ fastest"},
+	{"qwen-1.5b", "Qwen 2.5 1.5B", "Tier 1", "~3 GB", "32K", ""},
+	{"smollm2", "SmolLM2 1.7B", "Tier 1", "~3 GB", "8K", ""},
+	{"llama-1b", "Llama 3.2 1B", "Tier 1", "~2 GB", "128K", "gated"},
+	{"qwen-3b", "Qwen 2.5 3B", "Tier 2", "~5.6 GB", "32K", "⚠ heavy"},
+	{"gemma-2b", "Gemma 2 2B", "Tier 2", "~4 GB", "8K", ""},
+	{"llama-3b", "Llama 3.2 3B", "Tier 2", "~6 GB", "128K", "gated ⚠ heavy"},
 }
 
 // Model is the bubbletea model. -----------------------------------------------
@@ -1726,6 +1728,9 @@ func (m Model) renderModelPicker(maxHeight int) string {
 		Foreground(lipgloss.Color("#C4A7E7"))
 	dimStyle := style.Dim
 
+	// Column header
+	b.WriteString(dimStyle.Render("     Model                Tier    VRAM     Context") + "\n")
+
 	for i, mi := range selectableModels {
 		cursor := "  "
 		nameStyle := dimStyle
@@ -1734,15 +1739,19 @@ func (m Model) renderModelPicker(maxHeight int) string {
 			nameStyle = selectedStyle
 		}
 
-		line := fmt.Sprintf("%s%-22s %s   %s",
+		line := fmt.Sprintf("%s%-20s  %-7s %-8s %-5s",
 			cursor,
 			nameStyle.Render(mi.label),
 			dimStyle.Render(mi.tier),
 			dimStyle.Render(mi.vram),
+			dimStyle.Render(mi.ctx),
 		)
+		if mi.note != "" {
+			line += "  " + dimStyle.Render(mi.note)
+		}
 		b.WriteString(line + "\n")
 
-		if i >= maxHeight-4 {
+		if i >= maxHeight-5 {
 			break
 		}
 	}
