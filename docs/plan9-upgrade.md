@@ -1,6 +1,6 @@
 # pai — Plan 9 Upgrade
 
-Status: **plan** — ready for phased implementation.
+Status: **complete** — all 6 phases implemented.
 
 ---
 
@@ -503,12 +503,12 @@ func (c Critic) NextToken() tea.Cmd                  { ... }
 
 ```
 Phase 0 ✓  Upgrade transformers + torch; MPS stability fix for Llama
-Phase 1    Tool Registry                  ~ reshapes tools.go, model.go, llm-serve.py
-Phase 2    Prompt Namespace               ~ reshapes model.go prompt functions
-Phase 3    Message Plumbing               ~ reshapes print.go, model.go tool dispatch
-Phase 4    Session as Filesystem          ~ reshapes session.go
-Phase 5    Model Capabilities as Data     ~ reshapes model.go, llm-serve.py metadata
-Phase 6    Inference Interface Cleanup    ~ reshapes main.go inferProc
+Phase 5 ✓  Model Capabilities as Data     → models.json + pkg/catalog
+Phase 1 ✓  Tool Registry                  → pkg/tool (Registry, builtins)
+Phase 2 ✓  Prompt Namespace               → pkg/prompt (providers, psychology)
+Phase 3 ✓  Message Plumbing               → turn.go (Turn.ProcessReply)
+Phase 6 ✓  Inference Interface Cleanup    → reviewer interface extracted
+Phase 4 ✓  Session as Filesystem          → pkg/session (save, export)
 ```
 
 Phases 1 and 5 should come first — they create the shared data files
