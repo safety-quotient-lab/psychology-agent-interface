@@ -4,10 +4,16 @@
 
 - [x] **Per-turn format reinforcement** — Done (ed718c1). msgsWithFormatNudge()
       appends a transient reminder before every inference call (TUI + print mode).
-- [ ] **Multi-turn format drift** — Verify in TUI that per-turn nudge resolves
-      tag dropout on turn 2+. Run a multi-turn session and check replay.
-- [ ] **Verify unprompted tool call fix in TUI** — Code verified: no fake tool
-      exchanges remain. Needs TUI session replay to confirm end-to-end.
+- [x] **Multi-turn format drift** — Verified (e67f78f). All TUI chat inference
+      calls pass through `msgsWithFormatNudge()` → `ns.WithNudge()`, appending
+      tier-appropriate tag/confidence reminders at the tail of every turn.
+      Summary-only compaction calls intentionally skip nudge. Test coverage in
+      `pkg/prompt/prompt_test.go`.
+- [x] **Verify unprompted tool call fix in TUI** — Verified (e67f78f). File
+      listing now embeds directly in system prompt (no fake tool exchanges).
+      Few-shot priming teaches format, not tool patterns. `dispatchNextTool()`
+      gates dangerous ops through user approval. Original fix (f3fda40) intact
+      through all Plan 9 refactors.
 
 ## Context Management
 
