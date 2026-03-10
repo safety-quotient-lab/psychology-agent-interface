@@ -449,7 +449,7 @@ type appConfig struct {
 	autoApprove bool
 	projectRoot string
 	tokenBudget int
-	noReview    bool   // disable adversarial critic pass after each response
+	review      bool   // enable adversarial critic pass after each response (off by default)
 	quant       string // quantization: "4bit", "8bit", or "" (fp16)
 	gateway     string // SSH host for LLM gateway (e.g. "mac-mini"); empty = subprocess
 	print       bool   // headless print mode — no TUI, prompt from args or stdin
@@ -483,8 +483,8 @@ func main() {
 		"Auto-approve all tool calls without prompting")
 	root.Flags().IntVar(&c.tokenBudget, "budget", 0,
 		"Total token budget for session (0 = unlimited)")
-	root.Flags().BoolVar(&c.noReview, "no-review", false,
-		"Disable adversarial critic pass after each response")
+	root.Flags().BoolVar(&c.review, "review", false,
+		"Enable adversarial critic pass after each response (off by default)")
 	root.Flags().StringVar(&c.quant, "quant", "",
 		"Quantization: 4bit (~1.7GB for 3b) or 8bit (~3.5GB for 3b), or empty for fp16 (CUDA only)")
 	root.Flags().StringVar(&c.gateway, "gateway", "",

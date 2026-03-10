@@ -740,7 +740,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"",
 			)
 			m.conversation = append(m.conversation, Message{Role: "assistant", Content: reply})
-			if !m.cfg.noReview {
+			if m.cfg.review {
 				userMsg := lastUserMsg(m.conversation)
 				m.displayLines = append(m.displayLines, style.Dim.Render("─── critic ───"))
 				m.state = stateReview
@@ -1416,7 +1416,7 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 			style.Dim.Render("models: "+strings.Join(validModels, "  ")),
 			style.Dim.Render("tools needing approval: shell, write_file  (bypass: --yes)"),
 			style.Dim.Render("--budget N  — stop after N total tokens (0 = unlimited)"),
-			style.Dim.Render("--no-review — disable adversarial critic pass after each response"),
+			style.Dim.Render("--review    — enable adversarial critic pass after each response"),
 			style.Dim.Render("ctrl+o      — expand/collapse last tool output"),
 			style.Dim.Render("Escape      — abort in-flight inference/review and return to input"),
 			style.Dim.Render("Up/Down     — cycle input history  ·  PgUp/PgDown — scroll chat"),
