@@ -31,10 +31,10 @@
 
 ## TUI
 
-- [ ] **Fix mouse text selection** — Users cannot select text in the TUI for
-      copy/paste. Likely a bubbletea mouse event capture conflict. Investigate
-      whether disabling mouse reporting or switching to a zone-based approach
-      restores native terminal selection.
+- [x] **Fix mouse text selection** — Fixed (3255039). Removed
+      `tea.WithMouseCellMotion()` from `tea.NewProgram()` and the `MouseMsg`
+      handler. Mouse capture intercepted terminal selection. pgup/pgdn
+      keyboard scrolling remains functional.
 - [ ] **Autoscroll on content overflow** — First content overflow requires manual
       scroll. `syncViewport()` calls `GotoBottom()` only when `wasAtBottom ||
       activeStream` — check if `wasAtBottom` returns false on the initial
@@ -50,9 +50,9 @@
       model, and session stats below the input box. Use `os/user.Current()` and
       `os.Hostname()`. Render as a styled line between input and help bar in
       `View()`. Update `chatHeight()` chrome to account for the extra line.
-- [ ] **Fix TestGatewayHTTPProc timeout** — Test connects to port 7705 with no
-      server, always times out after 60s. Either add a test fixture/mock or
-      `t.Skip()` when gateway unavailable.
+- [x] **Fix TestGatewayHTTPProc timeout** — Fixed (3255039). Test now uses
+      gateway's actual loaded model, skips doInfer on timeout. Suite runs in
+      ~1.5s instead of ~62s.
 - [ ] **Debug log not writing** — `~/.local/state/pai/debug.log` stays at 0
       bytes despite `plog.L.Debug()` calls throughout model.go. Check logger
       initialization and default log level.
