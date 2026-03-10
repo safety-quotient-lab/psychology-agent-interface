@@ -611,8 +611,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmdReadLoadLine(m.proc)
 
 	case msgServerError:
-		m.displayLines = append(m.displayLines, style.Error.Render("ERROR: "+msg.err.Error()))
-		m.state = stateInput
+		m.displayLines = append(m.displayLines, style.Error.Render("ERROR: "+msg.err.Error()), "")
+		m.state = stateModelSelect
+		m.selectorReturn = true
 		m.syncViewport()
 		return m, nil
 
