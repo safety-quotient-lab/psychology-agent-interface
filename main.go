@@ -498,7 +498,7 @@ func main() {
 		"Model key (qwen-0.5b, qwen-1.5b, qwen-3b, smollm2, gemma-2b, llama-1b, llama-3b)")
 	root.Flags().StringVarP(&c.cwd, "cwd", "C", mustGetwd(),
 		"Working directory for tools")
-	root.Flags().IntVarP(&c.maxTurns, "max-turns", "n", 15,
+	root.Flags().IntVarP(&c.maxTurns, "max-turns", "n", 8,
 		"Tool-call limit per exchange")
 	root.Flags().BoolVarP(&c.autoApprove, "yes", "y", false,
 		"Auto-approve all tool calls without prompting")

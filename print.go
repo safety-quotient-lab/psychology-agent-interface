@@ -56,7 +56,7 @@ func runPrint(c appConfig, proc inferProc) error {
 
 	maxTurns := c.maxTurns
 	if maxTurns <= 0 {
-		maxTurns = 15
+		maxTurns = 8
 	}
 
 	// nudge wraps msgs with per-turn format reinforcement.

@@ -219,6 +219,9 @@ type Model struct {
 	lastToolResult string
 	showDetail     bool
 
+	// Tool loop detection — break when model repeats the same call
+	lastToolKey string // "name|argsJSON" of previous tool call
+
 	// model selector — interactive picker for startup and /model command
 	selectorCursor int    // highlighted index in catalog.All()
 	selectorReturn bool   // true when opened from /model (Esc returns to stateInput)
@@ -660,8 +663,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conversation = append(m.conversation, m.buildPriming()...)
 
 		// Now allow user input
-		m.state = stateInput
-		m.input.Focus()
+		m.returnToInput()
 		m.displayLines = append(m.displayLines,
 			style.Dim.Render("Type your task. /help for commands. Ctrl+C to exit."),
 			"",
@@ -702,7 +704,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.displayLines = append(m.displayLines, "")
 			}
-			m.state = stateInput
+			m.returnToInput()
 			m.syncViewport()
 			return m, nil
 		}
@@ -745,7 +747,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamBuf = nil
 			m.displayLines = append(m.displayLines,
 				style.Warning.Render(fmt.Sprintf("⚠ token budget reached (%d tokens)", m.sessionTokens)), "")
-			m.state = stateInput
+			m.returnToInput()
 			m.syncViewport()
 			return m, nil
 		}
@@ -765,7 +767,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.TrimSpace(clean) == "" {
 				m.displayLines = append(m.displayLines,
 					style.Warning.Render("⚠ empty reply from model"), "")
-				m.state = stateInput
+				m.returnToInput()
 				m.syncViewport()
 				return m, nil
 			}
@@ -783,9 +785,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncViewport()
 				return m, m.critic().startReview(userMsg, clean)
 			}
-			m.state = stateInput
+			m.returnToInput()
 			m.syncViewport()
 			return m, nil
+		}
+
+		// Detect tool call loop: if the model repeats the same single call,
+		// break out instead of burning tokens on an infinite loop.
+		if len(calls) == 1 {
+			argsJSON, _ := json.Marshal(calls[0].Args)
+			toolKey := calls[0].Name + "|" + string(argsJSON)
+			if toolKey == m.lastToolKey {
+				m.lastToolKey = ""
+				clean := stripMarkup(reply)
+				if clean == "" {
+					clean = reply
+				}
+				m.displayLines = append(m.displayLines,
+					style.Warning.Render("⚠ model repeated same tool call — stopping loop"), "")
+				m.conversation = append(m.conversation, Message{Role: "assistant", Content: reply})
+				m.returnToInput()
+				m.syncViewport()
+				return m, nil
+			}
+			m.lastToolKey = toolKey
+		} else {
+			m.lastToolKey = ""
 		}
 
 		m.conversation = append(m.conversation, Message{Role: "assistant", Content: reply})
@@ -872,7 +897,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.displayLines = append(m.displayLines,
 				style.Dim.Render(renderMarkdown(critique, m.vp.Width-2)), "")
 		}
-		m.state = stateInput
+		m.returnToInput()
 		m.syncViewport()
 		return m, nil
 
@@ -880,7 +905,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgShellDirect:
 		m.displayLines = append(m.displayLines,
 			wordwrap.String(strings.TrimRight(msg.output, "\n"), m.vp.Width-2), "")
-		m.state = stateInput
+		m.returnToInput()
 		m.syncViewport()
 		return m, nil
 
@@ -910,14 +935,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectorReturn = false
 					if selected.Key == m.modelName {
 						m.displayLines = append(m.displayLines, style.Dim.Render("already using "+selected.Key))
-						m.state = stateInput
+						m.returnToInput()
 						m.syncViewport()
 						return m, nil
 					}
 					proc, err := m.proc.restart(selected.Key, m.cfg.projectRoot)
 					if err != nil {
 						m.displayLines = append(m.displayLines, style.Error.Render("failed to switch: "+err.Error()))
-						m.state = stateInput
+						m.returnToInput()
 						m.syncViewport()
 						return m, nil
 					}
@@ -942,8 +967,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selectorReturn {
 					// Cancel in-session picker, return to input
 					m.selectorReturn = false
-					m.state = stateInput
-					m.input.Focus()
+					m.returnToInput()
 					return m, nil
 				}
 				// Startup: Esc quits
@@ -1004,8 +1028,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingTools = nil
 				m.displayLines = append(m.displayLines,
 					style.Warning.Render("⚠ tool batch cancelled"), "")
-				m.state = stateInput
-				m.input.Focus()
+				m.returnToInput()
 				m.syncViewport()
 				return m, nil
 			}
@@ -1044,6 +1067,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.totalTokens = 0
 				m.totalTime = 0
 				m.turnCount = 0
+				m.lastToolKey = ""
 				removed := m.compactIfNeeded()
 				m.state = stateThinking
 				m.syncViewport()
@@ -1121,8 +1145,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					style.Warning.Render("⚠ cancelled"), "")
 				m.conversation = append(m.conversation, m.turn().FormatDenial("ask_user"))
 				m.pendingTools = nil
-				m.state = stateInput
-				m.input.Focus()
+				m.returnToInput()
 				m.syncViewport()
 				return m, nil
 			case tea.KeyEnter:
@@ -1220,7 +1243,7 @@ func (m *Model) finishToolBatch() tea.Cmd {
 	if m.turnCount >= m.cfg.maxTurns {
 		m.displayLines = append(m.displayLines,
 			style.Warning.Render(fmt.Sprintf("Max turns (%d) reached.", m.cfg.maxTurns)), "")
-		m.state = stateInput
+		m.returnToInput()
 		m.syncViewport()
 		return nil
 	}
@@ -1645,13 +1668,15 @@ func renderMarkdown(text string, width int) string {
 	return strings.TrimRight(out, "\n")
 }
 
+// returnToInput transitions to stateInput and ensures the textarea has focus.
+func (m *Model) returnToInput() {
+	m.state = stateInput
+	m.input.Focus()
+}
+
 func (m *Model) syncViewport() {
 	if !m.vpReady {
 		return
-	}
-	// Ensure textarea has focus whenever we return to an input-accepting state.
-	if m.state == stateInput || m.state == stateAskUser {
-		m.input.Focus()
 	}
 	m.vp.Height = m.chatHeight()
 
