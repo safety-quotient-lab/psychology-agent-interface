@@ -444,6 +444,7 @@ type readyPayload struct {
 	VramMB    int     `json:"vram_mb"`
 	LoadS     float64 `json:"load_s"`
 	UseNative bool    `json:"use_native"`
+	Backend   string  `json:"backend,omitempty"`
 }
 
 type inferRequest struct {

@@ -75,6 +75,16 @@
 - [ ] **LSP live test** — Validate lsp_definition/references/hover with a running
       gopls against this codebase. Check startup latency impact.
 
+## MLX Backend
+
+- [x] **Dual-backend sidecar** — Done. `llm-serve.py` auto-selects MLX on Apple
+      Silicon (arm64 + mlx-lm installed), falls back to transformers on Linux/CUDA.
+      Same JSON protocol — Go TUI unchanged. Backend name reported in ready handshake.
+- [ ] **MLX live test** — Run smollm2 or qwen-0.5b via MLX backend, compare tok/s
+      against transformers+bfloat16. Verify tool call stopping works.
+- [ ] **MLX quantization** — Test 4-bit quantized models via mlx-lm (native on
+      Apple Silicon, unlike bitsandbytes). Could halve memory for larger models.
+
 ## Code Agent
 
 - [ ] **Go code generation and self-editing** — Extend pai to write Go code and

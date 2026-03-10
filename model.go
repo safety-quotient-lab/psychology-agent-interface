@@ -120,6 +120,7 @@ type msgServerReady struct {
 	vramMB    int
 	loadS     float64
 	useNative bool
+	backend   string
 }
 
 type msgServerError struct{ err error }
@@ -345,6 +346,7 @@ func cmdWaitReady(proc inferProc) tea.Cmd {
 		return msgServerReady{
 			model: msg.Model, vramMB: msg.VramMB,
 			loadS: msg.LoadS, useNative: msg.UseNative,
+			backend: msg.Backend,
 		}
 	}
 }
@@ -596,7 +598,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loadStage = ""
-		plog.L.Info("model ready", "model", msg.model, "vram_mb", msg.vramMB, "native", msg.useNative)
+		plog.L.Info("model ready", "model", msg.model, "vram_mb", msg.vramMB, "native", msg.useNative, "backend", msg.backend)
 		m.modelName = msg.model
 		m.vramMB = msg.vramMB
 		m.loadS = msg.loadS
