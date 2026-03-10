@@ -254,27 +254,74 @@ def _prepare_inputs(tok, messages, use_native):
     return tok(text, return_tensors="pt").to(DEVICE)
 
 
+def _has_complete_json(text, start):
+    """Check if text[start:] contains a complete JSON object by counting brace depth."""
+    depth = 0
+    in_string = False
+    escape = False
+    for ch in text[start:]:
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return True
+    return False
+
+
 def _tool_call_stopper(tok, use_native, n_prompt):
     """Return a StoppingCriteria list that halts generation after a complete
     TOOL_CALL JSON line (ReAct format) or </tool_call> tag (native format).
     This prevents small models from hallucinating fake TOOL_RESULT text."""
     from transformers import StoppingCriteria, StoppingCriteriaList
 
-    # Minimum tokens before a tool call could appear (~5 tokens for "TOOL_CALL: {")
+    # Minimum tokens before a tool call could appear
     min_check = 5
+    # Check every N tokens to avoid O(n²) decode cost
+    check_interval = 4
 
     class ToolCallStop(StoppingCriteria):
+        def __init__(self):
+            self.found = False
+
         def __call__(self, input_ids, scores, **kwargs):
+            if self.found:
+                return True
             n_gen = input_ids.shape[1] - n_prompt
             if n_gen < min_check:
                 return False
+            # Only decode every check_interval tokens (and always on min_check)
+            if n_gen > min_check and n_gen % check_interval != 0:
+                return False
             generated = tok.decode(input_ids[0, n_prompt:], skip_special_tokens=True)
             if use_native:
-                return "</tool_call>" in generated
-            # ReAct: stop once we see TOOL_CALL: and the text ends with }
-            if "TOOL_CALL:" not in generated:
+                # Count <tool_call>...</tool_call> pairs, not substrings
+                open_pos = generated.find("<tool_call>")
+                if open_pos < 0:
+                    return False
+                close_pos = generated.find("</tool_call>", open_pos + 11)
+                self.found = close_pos >= 0
+                return self.found
+            # ReAct: find TOOL_CALL: then verify complete JSON via brace depth
+            tc_pos = generated.find("TOOL_CALL:")
+            if tc_pos < 0:
                 return False
-            return generated.rstrip().endswith("}")
+            brace_pos = generated.find("{", tc_pos)
+            if brace_pos < 0:
+                return False
+            self.found = _has_complete_json(generated, brace_pos)
+            return self.found
 
     return StoppingCriteriaList([ToolCallStop()])
 

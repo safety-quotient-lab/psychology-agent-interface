@@ -228,6 +228,10 @@ type Model struct {
 	historyIdx   int    // -1 = not browsing history
 	inputDraft   string // saved current draft when history browsing begins
 
+	// cached system info for prompt bar (avoid syscalls per render)
+	cachedUser string
+	cachedHost string
+
 	spinner  spinner.Model
 	input    textarea.Model
 	vp       viewport.Model
@@ -258,6 +262,15 @@ func newProgressBar() progress.Model {
 	)
 }
 
+func cachedSysInfo() (string, string) {
+	user := os.Getenv("USER")
+	host, _ := os.Hostname()
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		host = host[:i]
+	}
+	return user, host
+}
+
 func newModel(c appConfig, proc inferProc) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -267,10 +280,11 @@ func newModel(c appConfig, proc inferProc) Model {
 	h.Styles.ShortKey = lipgloss.NewStyle().Foreground(style.Gray)
 	h.Styles.ShortDesc = lipgloss.NewStyle().Foreground(style.DimGray)
 
+	user, host := cachedSysInfo()
 	return Model{state: stateLoading, cfg: c, proc: proc, spinner: sp,
 		input: newTextarea(), help: h, keys: newKeyBindings(),
 		progress: newProgressBar(), historyIdx: -1,
-		skills: loadSkills(c.cwd)}
+		skills: loadSkills(c.cwd), cachedUser: user, cachedHost: host}
 }
 
 // newModelSelector creates a Model starting in the model picker state (no proc yet).
@@ -292,10 +306,12 @@ func newModelSelector(c appConfig) Model {
 		}
 	}
 
+	user, host := cachedSysInfo()
 	return Model{state: stateModelSelect, cfg: c, spinner: sp,
 		input: newTextarea(), help: h, keys: newKeyBindings(),
 		progress: newProgressBar(), historyIdx: -1,
-		skills: loadSkills(c.cwd), selectorCursor: cursor}
+		skills: loadSkills(c.cwd), selectorCursor: cursor,
+		cachedUser: user, cachedHost: host}
 }
 
 // cmdStartSidecar launches the Python sidecar for the selected model.
@@ -565,12 +581,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case msgLoadProgress:
+		// Ignore stale progress from cancelled loads
+		if m.state != stateLoading {
+			return m, nil
+		}
 		m.loadStage = msg.stage
 		cmd := m.progress.SetPercent(msg.pct / 100.0)
 		m.syncViewport()
 		return m, tea.Batch(cmd, cmdReadLoadLine(m.proc))
 
 	case msgServerReady:
+		// Ignore stale ready from cancelled loads
+		if m.state != stateLoading {
+			return m, nil
+		}
 		m.loadStage = ""
 		plog.L.Info("model ready", "model", msg.model, "vram_mb", msg.vramMB, "native", msg.useNative)
 		m.modelName = msg.model
@@ -1658,15 +1682,13 @@ func (m *Model) syncViewport() {
 }
 
 func (m Model) chatHeight() int {
-	// header(1) + statusLine(1) + promptBar(1) + helpBar(1) + inputArea
+	// Base chrome: header(1) + statusLine(1) + promptBar(1) + helpBar(1) = 4
 	chrome := 4
 	switch m.state {
 	case stateInput, stateAskUser:
 		chrome += m.input.Height() + 2 // textarea + border (top+bottom)
 	case stateConfirm:
 		chrome += 2 // tool detail + y/N prompt
-	default:
-		chrome += 1
 	}
 	h := m.height - chrome
 	if h < 4 {
@@ -1677,12 +1699,8 @@ func (m Model) chatHeight() int {
 
 // renderPromptBar returns a status line showing user, host, cwd, model.
 func (m Model) renderPromptBar() string {
-	user := os.Getenv("USER")
-	host, _ := os.Hostname()
-	// Shorten hostname (drop domain)
-	if i := strings.IndexByte(host, '.'); i > 0 {
-		host = host[:i]
-	}
+	user := m.cachedUser
+	host := m.cachedHost
 
 	cwd := m.cfg.cwd
 	if home, _ := os.UserHomeDir(); home != "" && strings.HasPrefix(cwd, home) {
@@ -1694,16 +1712,29 @@ func (m Model) renderPromptBar() string {
 		model = m.cfg.model
 	}
 
-	left := style.Dim.Render(user + "@" + host + ":" + cwd)
-	right := ""
+	rightParts := ""
 	if model != "" {
-		right = style.Dim.Render("[" + model + "]")
+		rightParts += "[" + model + "]"
 	}
 	if m.sessionTokens > 0 {
-		right += style.Dim.Render(fmt.Sprintf(" %dtok", m.sessionTokens))
+		rightParts += fmt.Sprintf(" %dtok", m.sessionTokens)
 	}
+	right := style.Dim.Render(rightParts)
+	rightW := lipgloss.Width(right)
 
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	prefix := user + "@" + host + ":"
+	// Truncate cwd if it won't fit
+	maxLeft := m.width - rightW - 2
+	if maxLeft < len(prefix)+4 {
+		maxLeft = len(prefix) + 4
+	}
+	leftStr := prefix + cwd
+	if len(leftStr) > maxLeft {
+		leftStr = leftStr[:maxLeft-1] + "…"
+	}
+	left := style.Dim.Render(leftStr)
+
+	gap := m.width - lipgloss.Width(left) - rightW
 	if gap < 1 {
 		gap = 1
 	}
