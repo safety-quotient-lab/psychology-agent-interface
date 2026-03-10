@@ -450,19 +450,21 @@ type appConfig struct {
 	print       bool   // headless print mode — no TUI, prompt from args or stdin
 	stream      bool   // stream tokens to stdout in print mode
 	prompt      string // joined positional args (print mode only)
+	modelSet    bool   // true if --model was explicitly provided
 }
 
 func main() {
 	var c appConfig
 	root := &cobra.Command{
 		Use:   "psyai [prompt...]",
-		Short: "Claude Code-like TUI with local LLM",
+		Short: "Socratic psychology agent interface with local LLM",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				c.prompt = strings.Join(args, " ")
 				c.print = true
 			}
+			c.modelSet = cmd.Flags().Changed("model")
 			return run(c)
 		},
 	}
@@ -493,18 +495,6 @@ func main() {
 }
 
 func run(c appConfig) error {
-	// Validate model key before touching Python
-	valid := false
-	for _, m := range validModels {
-		if c.model == m {
-			valid = true
-			break
-		}
-	}
-	if !valid {
-		return fmt.Errorf("unknown model %q — valid choices: %s", c.model, strings.Join(validModels, ", "))
-	}
-
 	// Load .dev.vars from home → cwd chain; closer files override outer ones.
 	home, _ := os.UserHomeDir()
 	var devVarsDirs []string
@@ -519,6 +509,47 @@ func run(c appConfig) error {
 	}
 
 	c.projectRoot = findProjectRoot()
+
+	// Auto-detect print mode: explicit --print flag, positional args, or piped stdin.
+	if !c.print {
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode() & os.ModeCharDevice) == 0 {
+			c.print = true
+		}
+	}
+
+	// Interactive model selector: when --model not explicitly set and in TUI mode,
+	// launch the TUI with the model picker before starting the sidecar.
+	if !c.modelSet && !c.print {
+		p := tea.NewProgram(newModelSelector(c), tea.WithAltScreen(), tea.WithMouseCellMotion())
+		finalModel, err := p.Run()
+		if err != nil {
+			return err
+		}
+		if m, ok := finalModel.(Model); ok && len(m.conversation) > 1 {
+			jsonlPath, jerr := exportJSONL(m.modelName, m.conversation, c.cwd)
+			if jerr == nil {
+				htmlPath := strings.TrimSuffix(jsonlPath, ".jsonl") + ".html"
+				title := fmt.Sprintf("psyai [%s] — %s", m.modelName, strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl"))
+				if rerr := generateReplay(jsonlPath, htmlPath, title); rerr == nil {
+					fmt.Fprintf(os.Stderr, "\n🎬  session replay: file://%s\n", htmlPath)
+				}
+			}
+		}
+		return err
+	}
+
+	// Validate model key before touching Python (required when --model set explicitly).
+	valid := false
+	for _, m := range validModels {
+		if c.model == m {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("unknown model %q — valid choices: %s", c.model, strings.Join(validModels, ", "))
+	}
 
 	var proc inferProc
 	if c.gateway != "" {
@@ -543,13 +574,6 @@ func run(c appConfig) error {
 		proc = sp
 	}
 
-	// Auto-detect print mode: explicit --print flag, positional args, or piped stdin.
-	if !c.print {
-		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			c.print = true
-		}
-	}
 	if c.print {
 		return runPrint(c, proc)
 	}

@@ -20,13 +20,14 @@ import (
 type appState int
 
 const (
-	stateLoading  appState = iota // waiting for sidecar ready handshake
-	stateInput                    // textinput focused
-	stateThinking                 // streaming inference in-flight
-	stateToolRun                  // tool executing
-	stateConfirm                  // awaiting y/n tool approval
-	stateAskUser                  // waiting for user answer to ask_user tool
-	stateReview                   // critic agent reviewing primary response
+	stateModelSelect appState = iota // interactive model picker
+	stateLoading                     // waiting for sidecar ready handshake
+	stateInput                       // textinput focused
+	stateThinking                    // streaming inference in-flight
+	stateToolRun                     // tool executing
+	stateConfirm                     // awaiting y/n tool approval
+	stateAskUser                     // waiting for user answer to ask_user tool
+	stateReview                      // critic agent reviewing primary response
 )
 
 // context compaction constants
@@ -71,6 +72,12 @@ type msgShellDirect struct {
 
 type msgAutoContext struct{ fileList string }
 
+// msgSidecarStarted carries the newly launched sidecar proc after model selection.
+type msgSidecarStarted struct {
+	proc inferProc
+	err  error
+}
+
 type msgReviewToken struct{ token string }
 type msgReviewDone struct {
 	tokens  int
@@ -84,6 +91,24 @@ type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 	Name    string `json:"name,omitempty"`
+}
+
+// modelInfo describes a selectable model for the picker UI.
+type modelInfo struct {
+	key   string // model key (e.g. "qwen-3b")
+	label string // display label
+	tier  string // psychology prompt tier
+	vram  string // approximate VRAM usage
+}
+
+var selectableModels = []modelInfo{
+	{"qwen-0.5b", "Qwen 2.5 0.5B", "Tier 1 (≤2B)", "~1 GB"},
+	{"qwen-1.5b", "Qwen 2.5 1.5B", "Tier 1 (≤2B)", "~3 GB"},
+	{"qwen-3b", "Qwen 2.5 3B", "Tier 2 (2B–4B)", "~5.6 GB"},
+	{"smollm2", "SmolLM2 1.7B", "Tier 1 (≤2B)", "~3 GB"},
+	{"gemma-2b", "Gemma 2 2B", "Tier 2 (2B–4B)", "~4 GB"},
+	{"llama-1b", "Llama 3.2 1B", "Tier 1 (≤2B)", "~2 GB"},
+	{"llama-3b", "Llama 3.2 3B", "Tier 2 (2B–4B)", "~6 GB"},
 }
 
 // Model is the bubbletea model. -----------------------------------------------
@@ -128,6 +153,10 @@ type Model struct {
 	lastToolResult string
 	showDetail     bool
 
+	// model selector — interactive picker for startup and /model command
+	selectorCursor int  // highlighted index in selectableModels
+	selectorReturn bool // true when opened from /model (Esc returns to stateInput)
+
 	// input history — shell-style up/down recall
 	inputHistory []string
 	historyIdx   int    // -1 = not browsing history
@@ -147,16 +176,53 @@ func newModel(c appConfig, proc inferProc) Model {
 	sp.Style = lipgloss.NewStyle().Foreground(style.PurpleDim)
 
 	ti := textinput.New()
-	ti.Placeholder = "Type your task..."
+	ti.Placeholder = "Type your message..."
 	ti.CharLimit = 0
 
 	return Model{state: stateLoading, cfg: c, proc: proc, spinner: sp, input: ti, historyIdx: -1,
 		skills: loadSkills(c.cwd)}
 }
 
+// newModelSelector creates a Model starting in the model picker state (no proc yet).
+func newModelSelector(c appConfig) Model {
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(style.PurpleDim)
+
+	ti := textinput.New()
+	ti.Placeholder = "Type your message..."
+	ti.CharLimit = 0
+
+	// Pre-select the default model in the cursor
+	cursor := 0
+	for i, m := range selectableModels {
+		if m.key == c.model {
+			cursor = i
+			break
+		}
+	}
+
+	return Model{state: stateModelSelect, cfg: c, spinner: sp, input: ti, historyIdx: -1,
+		skills: loadSkills(c.cwd), selectorCursor: cursor}
+}
+
+// cmdStartSidecar launches the Python sidecar for the selected model.
+func cmdStartSidecar(model, projectRoot, quant string) tea.Cmd {
+	return func() tea.Msg {
+		sp, err := startSidecarQuant(model, projectRoot, quant)
+		if err != nil {
+			return msgSidecarStarted{err: err}
+		}
+		return msgSidecarStarted{proc: sp}
+	}
+}
+
 // Init fires the spinner and the blocking sidecar-ready read. -----------------
 
 func (m Model) Init() tea.Cmd {
+	if m.state == stateModelSelect {
+		return m.spinner.Tick
+	}
 	return tea.Batch(m.spinner.Tick, cmdWaitReady(m.proc))
 }
 
@@ -383,6 +449,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		m.syncViewport()
 		return m, cmdAutoContext(m.cfg.cwd)
+
+	case msgSidecarStarted:
+		if msg.err != nil {
+			m.displayLines = append(m.displayLines, style.Error.Render("failed to start sidecar: "+msg.err.Error()))
+			m.state = stateModelSelect
+			m.syncViewport()
+			return m, nil
+		}
+		m.proc = msg.proc
+		m.state = stateLoading
+		m.displayLines = append(m.displayLines,
+			style.Dim.Render(fmt.Sprintf("starting %s...", m.cfg.model)), "")
+		m.syncViewport()
+		return m, cmdWaitReady(m.proc)
 
 	case msgServerError:
 		m.displayLines = append(m.displayLines, style.Error.Render("ERROR: "+msg.err.Error()))
@@ -627,6 +707,65 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch m.state {
+		case stateModelSelect:
+			switch msg.Type {
+			case tea.KeyUp, tea.KeyShiftTab:
+				if m.selectorCursor > 0 {
+					m.selectorCursor--
+				}
+			case tea.KeyDown, tea.KeyTab:
+				if m.selectorCursor < len(selectableModels)-1 {
+					m.selectorCursor++
+				}
+			case tea.KeyEnter:
+				selected := selectableModels[m.selectorCursor]
+				m.cfg.model = selected.key
+				if m.selectorReturn {
+					// In-session switch: restart sidecar with new model
+					m.selectorReturn = false
+					if selected.key == m.modelName {
+						m.displayLines = append(m.displayLines, style.Dim.Render("already using "+selected.key))
+						m.state = stateInput
+						m.syncViewport()
+						return m, nil
+					}
+					proc, err := m.proc.restart(selected.key, m.cfg.projectRoot)
+					if err != nil {
+						m.displayLines = append(m.displayLines, style.Error.Render("failed to switch: "+err.Error()))
+						m.state = stateInput
+						m.syncViewport()
+						return m, nil
+					}
+					m.proc = proc
+					m.modelName = ""
+					m.conversation = nil
+					m.totalTokens = 0
+					m.totalTime = 0
+					m.turnCount = 0
+					m.state = stateLoading
+					m.displayLines = append(m.displayLines,
+						style.Dim.Render(fmt.Sprintf("switching to %s...", selected.key)), "")
+					m.syncViewport()
+					return m, cmdWaitReady(m.proc)
+				}
+				// Startup flow: launch sidecar for the first time
+				m.displayLines = append(m.displayLines,
+					style.Dim.Render(fmt.Sprintf("starting %s...", selected.key)), "")
+				m.syncViewport()
+				return m, cmdStartSidecar(selected.key, m.cfg.projectRoot, m.cfg.quant)
+			case tea.KeyEsc:
+				if m.selectorReturn {
+					// Cancel in-session picker, return to input
+					m.selectorReturn = false
+					m.state = stateInput
+					m.input.Focus()
+					return m, nil
+				}
+				// Startup: Esc quits
+				return m, tea.Quit
+			}
+			return m, nil
+
 		case stateThinking:
 			if msg.Type == tea.KeyEsc {
 				// Abort in-flight inference
@@ -1034,8 +1173,17 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 
 	case "/model":
 		if len(parts) == 1 {
-			m.displayLines = append(m.displayLines,
-				style.Dim.Render("model: "+m.modelName+"  (use /model <name> to switch)"))
+			// Open interactive model picker
+			m.selectorReturn = true
+			// Pre-select the current model
+			for i, mi := range selectableModels {
+				if mi.key == m.modelName {
+					m.selectorCursor = i
+					break
+				}
+			}
+			m.state = stateModelSelect
+			m.input.Blur()
 			return nil
 		}
 		newModel := parts[1]
@@ -1109,7 +1257,7 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 
 	case "/help":
 		m.displayLines = append(m.displayLines,
-			style.Dim.Render("/quit  /exit  /clear  /cwd <path>  /model [name]"),
+			style.Dim.Render("/quit  /exit  /clear  /cwd <path>  /model [name or picker]"),
 			style.Dim.Render("/system [text]  — show or set session system prompt"),
 			style.Dim.Render("/export         — save conversation as markdown to cwd"),
 			style.Dim.Render("/session save|list|load <n>  /help"),
@@ -1321,7 +1469,14 @@ func (m Model) chatHeight() int {
 
 func (m Model) View() string {
 	if !m.vpReady {
+		if m.state == stateModelSelect {
+			return m.renderModelSelector()
+		}
 		return m.spinner.View() + " " + style.Dim.Render("loading model...")
+	}
+
+	if m.state == stateModelSelect {
+		return m.renderModelSelectorFull()
 	}
 
 	modelLabel := ""
@@ -1372,6 +1527,61 @@ func (m Model) View() string {
 		parts = append(parts, inputBar)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// renderModelSelector renders the model picker before the viewport initializes.
+func (m Model) renderModelSelector() string {
+	return m.renderModelPicker(24) // use a reasonable default height
+}
+
+// renderModelSelectorFull renders the model picker using the full viewport dimensions.
+func (m Model) renderModelSelectorFull() string {
+	header := style.Title.Width(m.width).Render(" psyai  select a model ")
+	content := m.renderModelPicker(m.height - 4)
+	hint := style.Dim.Render("  ↑/↓ navigate · Enter select · Esc " +
+		func() string {
+			if m.selectorReturn {
+				return "cancel"
+			}
+			return "quit"
+		}())
+	return header + "\n" + content + "\n" + hint
+}
+
+// renderModelPicker renders the model list with the current cursor position.
+func (m Model) renderModelPicker(maxHeight int) string {
+	var b strings.Builder
+	b.WriteString("\n")
+
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#E0DEF4"))
+	cursorStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#C4A7E7"))
+	dimStyle := style.Dim
+
+	for i, mi := range selectableModels {
+		cursor := "  "
+		nameStyle := dimStyle
+		if i == m.selectorCursor {
+			cursor = cursorStyle.Render("> ")
+			nameStyle = selectedStyle
+		}
+
+		line := fmt.Sprintf("%s%-22s %s   %s",
+			cursor,
+			nameStyle.Render(mi.label),
+			dimStyle.Render(mi.tier),
+			dimStyle.Render(mi.vram),
+		)
+		b.WriteString(line + "\n")
+
+		if i >= maxHeight-4 {
+			break
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // psychologyPromptTier selects the distilled psychology-agent system prompt
