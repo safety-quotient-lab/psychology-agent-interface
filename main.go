@@ -18,6 +18,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/catalog"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/config"
 	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
 	"github.com/spf13/cobra"
@@ -451,11 +452,6 @@ type inferResponse struct {
 	Error   string  `json:"error"`
 }
 
-var validModels = []string{
-	"qwen-0.5b", "qwen-1.5b", "qwen-3b",
-	"smollm2", "gemma-2b", "llama-1b", "llama-3b",
-}
-
 // appConfig holds resolved CLI flags.
 type appConfig struct {
 	model       string
@@ -464,13 +460,14 @@ type appConfig struct {
 	autoApprove bool
 	projectRoot string
 	tokenBudget int
-	review      bool   // enable adversarial critic pass after each response (off by default)
-	quant       string // quantization: "4bit", "8bit", or "" (fp16)
-	gateway     string // SSH host for LLM gateway (e.g. "mac-mini"); empty = subprocess
-	print       bool   // headless print mode — no TUI, prompt from args or stdin
-	stream      bool   // stream tokens to stdout in print mode
-	prompt      string // joined positional args (print mode only)
-	modelSet    bool   // true if --model was explicitly provided
+	review      bool             // enable adversarial critic pass after each response (off by default)
+	quant       string           // quantization: "4bit", "8bit", or "" (fp16)
+	gateway     string           // SSH host for LLM gateway (e.g. "mac-mini"); empty = subprocess
+	print       bool             // headless print mode — no TUI, prompt from args or stdin
+	stream      bool             // stream tokens to stdout in print mode
+	prompt      string           // joined positional args (print mode only)
+	modelSet    bool             // true if --model was explicitly provided
+	catalog     *catalog.Catalog // model metadata loaded from models.json
 }
 
 func main() {
@@ -531,6 +528,13 @@ func run(c appConfig) error {
 
 	c.projectRoot = findProjectRoot()
 
+	// Load model catalog from models.json.
+	cat, err := catalog.Load(c.projectRoot)
+	if err != nil {
+		return fmt.Errorf("model catalog: %w", err)
+	}
+	c.catalog = cat
+
 	// Auto-detect print mode: explicit --print flag, positional args, or piped stdin.
 	if !c.print {
 		stat, _ := os.Stdin.Stat()
@@ -561,15 +565,8 @@ func run(c appConfig) error {
 	}
 
 	// Validate model key before touching Python (required when --model set explicitly).
-	valid := false
-	for _, m := range validModels {
-		if c.model == m {
-			valid = true
-			break
-		}
-	}
-	if !valid {
-		return fmt.Errorf("unknown model %q — valid choices: %s", c.model, strings.Join(validModels, ", "))
+	if c.catalog.Get(c.model) == nil {
+		return fmt.Errorf("unknown model %q — valid choices: %s", c.model, strings.Join(c.catalog.ValidKeys(), ", "))
 	}
 
 	var proc inferProc

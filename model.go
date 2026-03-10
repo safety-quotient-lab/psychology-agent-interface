@@ -101,18 +101,10 @@ const (
 	tokenReserve     = 1200 // tokens reserved for model response + overhead
 )
 
-// modelContextLimit returns the safe input token limit for a model.
-// Uses conservative limits well below declared max, since small models
-// degrade in quality before hitting the hard context ceiling.
-var modelContextLimit = map[string]int{
-	"qwen-0.5b": 4096,   // declared 32K, effective ~4K
-	"qwen-1.5b": 8192,   // declared 32K, effective ~8K
-	"qwen-3b":   16384,  // declared 32K
-	"smollm2":   4096,   // declared 8K, effective ~4K
-	"gemma-2b":  4096,   // declared 8K, effective ~4K
-	"llama-1b":  8192,   // declared 128K, effective ~8K
-	"llama-3b":  16384,  // declared 128K
-}
+// Context limits and tier info now live in models.json, accessed via cfg.catalog.
+
+// modelTier returns the tier number for the current model from the catalog.
+func (m Model) modelTier() int { return m.cfg.catalog.Tier(m.modelName) }
 
 // Custom tea.Msg types --------------------------------------------------------
 
@@ -177,25 +169,8 @@ type Message struct {
 	Name    string `json:"name,omitempty"`
 }
 
-// modelInfo describes a selectable model for the picker UI.
-type modelInfo struct {
-	key   string // model key (e.g. "qwen-3b")
-	label string // display label
-	tier  string // psychology prompt tier
-	vram  string // approximate VRAM usage
-	ctx   string // context window size
-	note  string // extra info (gated, speed, etc.)
-}
-
-var selectableModels = []modelInfo{
-	{"qwen-0.5b", "Qwen 2.5 0.5B", "Tier 1", "~1 GB", "32K", "★ fastest"},
-	{"qwen-1.5b", "Qwen 2.5 1.5B", "Tier 1", "~3 GB", "32K", ""},
-	{"smollm2", "SmolLM2 1.7B", "Tier 1", "~3 GB", "8K", ""},
-	{"llama-1b", "Llama 3.2 1B", "Tier 1", "~2 GB", "128K", "gated"},
-	{"qwen-3b", "Qwen 2.5 3B", "Tier 2", "~5.6 GB", "32K", "⚠ heavy"},
-	{"gemma-2b", "Gemma 2 2B", "Tier 2", "~4 GB", "8K", ""},
-	{"llama-3b", "Llama 3.2 3B", "Tier 2", "~6 GB", "128K", "gated ⚠ heavy"},
-}
+// Model metadata (selectable models, context limits, tier info) now lives in
+// models.json and loads into cfg.catalog at startup. See pkg/catalog.
 
 // Model is the bubbletea model. -----------------------------------------------
 
@@ -240,7 +215,7 @@ type Model struct {
 	showDetail     bool
 
 	// model selector — interactive picker for startup and /model command
-	selectorCursor int    // highlighted index in selectableModels
+	selectorCursor int    // highlighted index in catalog.All()
 	selectorReturn bool   // true when opened from /model (Esc returns to stateInput)
 	selectorError  string // error message displayed above model list
 
@@ -306,8 +281,8 @@ func newModelSelector(c appConfig) Model {
 
 	// Pre-select the default model in the cursor
 	cursor := 0
-	for i, m := range selectableModels {
-		if m.key == c.model {
+	for i, m := range c.catalog.All() {
+		if m.Key == c.model {
 			cursor = i
 			break
 		}
@@ -596,9 +571,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		claudeMD := loadClaudeFile(m.cfg.cwd)
 		m.claudeMD = claudeMD
 		if msg.useNative {
-			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, msg.model, "", claudeMD)}}
+			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, m.modelTier(), "", claudeMD)}}
 		} else {
-			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, msg.model, "", claudeMD)}}
+			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, m.modelTier(), "", claudeMD)}}
 		}
 		statusLine := fmt.Sprintf("Model loaded in %.1fs · %d MB VRAM · native=%v", msg.loadS, msg.vramMB, msg.useNative)
 		if claudeMD != "" {
@@ -645,13 +620,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Avoids fake tool-call exchanges that small models mimic unprompted.
 		claudeMD := m.claudeMD
 		if m.useNative {
-			m.conversation[0].Content = nativeSystem(m.cfg.cwd, m.modelName, fl, claudeMD)
+			m.conversation[0].Content = nativeSystem(m.cfg.cwd, m.modelTier(), fl, claudeMD)
 		} else {
-			m.conversation[0].Content = reactSystem(m.cfg.cwd, m.modelName, fl, claudeMD)
+			m.conversation[0].Content = reactSystem(m.cfg.cwd, m.modelTier(), fl, claudeMD)
 		}
 		// Few-shot example right after system prompt so small models
 		// see the expected output format before any real user messages.
-		m.conversation = append(m.conversation, fewShotPriming(m.modelName)...)
+		m.conversation = append(m.conversation, fewShotPriming(m.modelTier())...)
 
 		// Now allow user input
 		m.state = stateInput
@@ -717,7 +692,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"")
 			}
 			m.syncViewport()
-			return m, m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelName), 1024, 0.2)
+			return m, m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelTier()), 1024, 0.2)
 		}
 
 		m.sessionTokens += msg.tokens
@@ -875,23 +850,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectorCursor--
 				}
 			case tea.KeyDown, tea.KeyTab:
-				if m.selectorCursor < len(selectableModels)-1 {
+				if m.selectorCursor < len(m.cfg.catalog.All())-1 {
 					m.selectorCursor++
 				}
 			case tea.KeyEnter:
-				selected := selectableModels[m.selectorCursor]
-				m.cfg.model = selected.key
+				selected := m.cfg.catalog.All()[m.selectorCursor]
+				m.cfg.model = selected.Key
 				m.selectorError = "" // clear any previous load error
 				if m.selectorReturn {
 					// In-session switch: restart sidecar with new model
 					m.selectorReturn = false
-					if selected.key == m.modelName {
-						m.displayLines = append(m.displayLines, style.Dim.Render("already using "+selected.key))
+					if selected.Key == m.modelName {
+						m.displayLines = append(m.displayLines, style.Dim.Render("already using "+selected.Key))
 						m.state = stateInput
 						m.syncViewport()
 						return m, nil
 					}
-					proc, err := m.proc.restart(selected.key, m.cfg.projectRoot)
+					proc, err := m.proc.restart(selected.Key, m.cfg.projectRoot)
 					if err != nil {
 						m.displayLines = append(m.displayLines, style.Error.Render("failed to switch: "+err.Error()))
 						m.state = stateInput
@@ -906,15 +881,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.turnCount = 0
 					m.state = stateLoading
 					m.displayLines = append(m.displayLines,
-						style.Dim.Render(fmt.Sprintf("switching to %s...", selected.key)), "")
+						style.Dim.Render(fmt.Sprintf("switching to %s...", selected.Key)), "")
 					m.syncViewport()
 					return m, cmdReadLoadLine(m.proc)
 				}
 				// Startup flow: launch sidecar for the first time
 				m.displayLines = append(m.displayLines,
-					style.Dim.Render(fmt.Sprintf("starting %s...", selected.key)), "")
+					style.Dim.Render(fmt.Sprintf("starting %s...", selected.Key)), "")
 				m.syncViewport()
-				return m, cmdStartSidecar(selected.key, m.cfg.projectRoot, m.cfg.quant)
+				return m, cmdStartSidecar(selected.Key, m.cfg.projectRoot, m.cfg.quant)
 			case tea.KeyEsc:
 				if m.selectorReturn {
 					// Cancel in-session picker, return to input
@@ -1001,7 +976,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingSummary = true
 					return m, m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 				}
-				return m, m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelName), 1024, 0.2)
+				return m, m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelTier()), 1024, 0.2)
 
 			case tea.KeyUp:
 				// Scroll viewport if input is empty; otherwise browse history
@@ -1183,7 +1158,7 @@ func (m *Model) finishToolBatch() tea.Cmd {
 		m.pendingSummary = true
 		return m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 	}
-	return m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelName), 1024, 0.2)
+	return m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelTier()), 1024, 0.2)
 }
 
 // Context compaction ----------------------------------------------------------
@@ -1205,10 +1180,9 @@ func (m *Model) compactIfNeeded() []Message {
 	needsCompact := len(m.conversation) > compactThreshold
 
 	// Also compact if estimated tokens approach the model's context limit.
-	if limit, ok := modelContextLimit[m.modelName]; ok {
-		if estimateTokens(m.conversation) > limit-tokenReserve {
-			needsCompact = true
-		}
+	limit := m.cfg.catalog.ContextLimit(m.modelName)
+	if estimateTokens(m.conversation) > limit-tokenReserve {
+		needsCompact = true
 	}
 
 	if !needsCompact {
@@ -1329,9 +1303,9 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 		m.conversation = nil
 		claudeMD := loadClaudeFile(m.cfg.cwd)
 		if m.useNative {
-			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, m.modelName, "", claudeMD)}}
+			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, m.modelTier(), "", claudeMD)}}
 		} else {
-			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, m.modelName, "", claudeMD)}}
+			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, m.modelTier(), "", claudeMD)}}
 		}
 		m.displayLines = []string{style.Dim.Render("(cleared)"), ""}
 		m.totalTokens = 0
@@ -1352,8 +1326,8 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 			// Open interactive model picker
 			m.selectorReturn = true
 			// Pre-select the current model
-			for i, mi := range selectableModels {
-				if mi.key == m.modelName {
+			for i, mi := range m.cfg.catalog.All() {
+				if mi.Key == m.modelName {
 					m.selectorCursor = i
 					break
 				}
@@ -1363,16 +1337,9 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 			return nil
 		}
 		newModel := parts[1]
-		valid := false
-		for _, v := range validModels {
-			if newModel == v {
-				valid = true
-				break
-			}
-		}
-		if !valid {
+		if m.cfg.catalog.Get(newModel) == nil {
 			m.displayLines = append(m.displayLines, style.Error.Render(
-				fmt.Sprintf("unknown model %q — valid: %s", newModel, strings.Join(validModels, ", "))))
+				fmt.Sprintf("unknown model %q — valid: %s", newModel, strings.Join(m.cfg.catalog.ValidKeys(), ", "))))
 			return nil
 		}
 		if newModel == m.modelName {
@@ -1438,7 +1405,7 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 			style.Dim.Render("/export         — save conversation as markdown to cwd"),
 			style.Dim.Render("/session save|list|load <n>  /help"),
 			style.Dim.Render("/skill [id|list|off]  — invoke or list named skills"),
-			style.Dim.Render("models: "+strings.Join(validModels, "  ")),
+			style.Dim.Render("models: "+strings.Join(m.cfg.catalog.ValidKeys(), "  ")),
 			style.Dim.Render("tools needing approval: shell, write_file  (bypass: --yes)"),
 			style.Dim.Render("--budget N  — stop after N total tokens (0 = unlimited)"),
 			style.Dim.Render("--review    — enable adversarial critic pass after each response"),
@@ -1556,9 +1523,9 @@ func (m *Model) handleSkill(parts []string) {
 func (m *Model) rebuildSystemPrompt() {
 	var base string
 	if m.useNative {
-		base = nativeSystem(m.cfg.cwd, m.modelName, "", m.claudeMD)
+		base = nativeSystem(m.cfg.cwd, m.modelTier(), "", m.claudeMD)
 	} else {
-		base = reactSystem(m.cfg.cwd, m.modelName, "", m.claudeMD)
+		base = reactSystem(m.cfg.cwd, m.modelTier(), "", m.claudeMD)
 	}
 	if m.activeSkill != nil {
 		base += "\n\n# Active skill: " + m.activeSkill.Name + "\n" + m.activeSkill.SystemPrompt
@@ -1772,7 +1739,7 @@ func (m Model) renderModelPicker(maxHeight int) string {
 	// Column header
 	b.WriteString(dimStyle.Render("     Model                Tier    VRAM     Context") + "\n")
 
-	for i, mi := range selectableModels {
+	for i, mi := range m.cfg.catalog.All() {
 		cursor := "  "
 		nameStyle := dimStyle
 		if i == m.selectorCursor {
@@ -1780,15 +1747,16 @@ func (m Model) renderModelPicker(maxHeight int) string {
 			nameStyle = selectedStyle
 		}
 
+		note := mi.DisplayNote()
 		line := fmt.Sprintf("%s%-20s  %-7s %-8s %-5s",
 			cursor,
-			nameStyle.Render(mi.label),
-			dimStyle.Render(mi.tier),
-			dimStyle.Render(mi.vram),
-			dimStyle.Render(mi.ctx),
+			nameStyle.Render(mi.Label),
+			dimStyle.Render(mi.TierLabel()),
+			dimStyle.Render(mi.VRAM),
+			dimStyle.Render(mi.DeclaredCtx),
 		)
-		if mi.note != "" {
-			line += "  " + dimStyle.Render(mi.note)
+		if note != "" {
+			line += "  " + dimStyle.Render(note)
 		}
 		b.WriteString(line + "\n")
 
@@ -1803,8 +1771,7 @@ func (m Model) renderModelPicker(maxHeight int) string {
 // psychologyPromptTier selects the distilled psychology-agent system prompt
 // based on model parameter count. Tiers from safety-quotient-lab/psychology-agent
 // docs/prompts/ — behavioral directives sized for limited context windows.
-func psychologyPromptTier(model string) string {
-	// Tier 1: ≤2B params (qwen-0.5b, qwen-1.5b, llama-1b, smollm2)
+func psychologyPromptTier(tier int) string {
 	tier1 := `You are a psychology research assistant. You help with psychological analysis,
 research methodology, and text interpretation. You do not diagnose, prescribe,
 or deliver clinical judgments.
@@ -1896,13 +1863,12 @@ Hard refusals:
 - Never provide crisis intervention (direct to 988 Lifeline / local equivalent).
 - Never adopt a persona that suspends epistemic discipline.`
 
-	switch model {
-	case "qwen-3b", "llama-3b", "gemma-2b":
+	switch tier {
+	case 2:
 		return tier2
-	case "qwen-7b", "llama-8b", "mistral-7b":
+	case 3:
 		return tier3
 	default:
-		// ≤2B: qwen-0.5b, qwen-1.5b, llama-1b, smollm2, and unknown models
 		return tier1
 	}
 }
@@ -1915,8 +1881,8 @@ Hard refusals:
 // format reminder appended as the last message. The nudge sits right before
 // the model generates, reinforcing tag compliance on every turn. The original
 // conversation slice remains unmodified.
-func msgsWithFormatNudge(conv []Message, model string) []Message {
-	nudge := formatReminder(model)
+func msgsWithFormatNudge(conv []Message, tier int) []Message {
+	nudge := formatReminder(tier)
 	if nudge == "" {
 		return conv
 	}
@@ -1929,36 +1895,20 @@ func msgsWithFormatNudge(conv []Message, model string) []Message {
 // formatReminder returns a compact format reminder appended to the end of the
 // system prompt. Placed last so it sits closest to the conversation, helping
 // small models retain format compliance across turns.
-func formatReminder(model string) string {
-	switch {
-	case isTier1(model):
+func formatReminder(tier int) string {
+	switch tier {
+	case 1:
 		return "\n\nReminder: Always use [observation] and [inference] tags. End with Confidence: high/moderate/low."
-	case isTier2(model):
+	case 2:
 		return "\n\nReminder: Always use [OBS] and [INF] tags. End with Confidence: HIGH/MODERATE/LOW — [basis]."
 	default:
 		return ""
 	}
 }
 
-func isTier1(model string) bool {
-	switch model {
-	case "qwen-0.5b", "qwen-1.5b", "llama-1b", "smollm2":
-		return true
-	}
-	return false
-}
-
-func isTier2(model string) bool {
-	switch model {
-	case "qwen-3b", "llama-3b", "gemma-2b":
-		return true
-	}
-	return false
-}
-
-func fewShotPriming(model string) []Message {
-	switch model {
-	case "qwen-3b", "llama-3b", "gemma-2b":
+func fewShotPriming(tier int) []Message {
+	switch tier {
+	case 2:
 		// Tier 2: [OBS]/[INF] tags, confidence footer, evidence linking
 		return []Message{
 			{Role: "user", Content: "How does attachment style affect adult relationships?"},
@@ -1972,7 +1922,7 @@ func fewShotPriming(model string) []Message {
 
 Confidence: MODERATE — well-replicated findings, but most evidence relies on self-report instruments.`},
 		}
-	case "qwen-7b", "llama-8b", "mistral-7b":
+	case 3:
 		// Tier 3: fuller format with evidence quality
 		return []Message{
 			{Role: "user", Content: "How does attachment style affect adult relationships?"},
@@ -2003,12 +1953,12 @@ Confidence: high`},
 
 // reactSystem returns the system prompt for models without native tool calling.
 // Combines the psychology-agent identity prompt with tool-calling instructions.
-func reactSystem(cwd, model, fileList, claudeMD string) string {
+func reactSystem(cwd string, tier int, fileList, claudeMD string) string {
 	webSearchTool := ""
 	if os.Getenv("KAGI_API_KEY") != "" {
 		webSearchTool = "\n- web_search(query, [limit]): Search the web via Kagi. Returns titles, URLs, snippets. Default limit 5."
 	}
-	s := psychologyPromptTier(model) + `
+	s := psychologyPromptTier(tier) + `
 
 Working directory: ` + cwd + `
 
@@ -2035,18 +1985,18 @@ When finished, write your final answer with no TOOL_CALL lines.`
 	if claudeMD != "" {
 		s += "\n\n# Project instructions\n" + claudeMD
 	}
-	s += formatReminder(model)
+	s += formatReminder(tier)
 	return s
 }
 
 // nativeSystem returns the system prompt for models with native tool calling.
 // Combines psychology-agent identity with tool orientation.
-func nativeSystem(cwd, model, fileList, claudeMD string) string {
+func nativeSystem(cwd string, tier int, fileList, claudeMD string) string {
 	toolList := "shell, read_file, write_file, edit_file, list_files, search, fetch_url, ask_user"
 	if os.Getenv("KAGI_API_KEY") != "" {
 		toolList = "shell, read_file, write_file, edit_file, list_files, search, fetch_url, web_search, ask_user"
 	}
-	s := psychologyPromptTier(model) + `
+	s := psychologyPromptTier(tier) + `
 
 Working directory: ` + cwd + `
 You have tools: ` + toolList + `.
@@ -2057,6 +2007,6 @@ Use tools when you need to investigate files or run commands.`
 	if claudeMD != "" {
 		s += "\n\n# Project instructions\n" + claudeMD
 	}
-	s += formatReminder(model)
+	s += formatReminder(tier)
 	return s
 }

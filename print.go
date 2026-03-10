@@ -37,15 +37,16 @@ func runPrint(c appConfig, proc inferProc) error {
 
 	// Build system prompt with file listing embedded (no separate tool priming
 	// in print mode — keeps context small for Tier 1 models).
+	tier := c.catalog.Tier(c.model)
 	fileList := executeTool("list_files", map[string]any{"pattern": "*"}, c.cwd)
 	var sysprompt string
 	if useNative {
-		sysprompt = nativeSystem(c.cwd, c.model, fileList, "")
+		sysprompt = nativeSystem(c.cwd, tier, fileList, "")
 	} else {
-		sysprompt = reactSystem(c.cwd, c.model, fileList, "")
+		sysprompt = reactSystem(c.cwd, tier, fileList, "")
 	}
 
-	msgs := append([]Message{{Role: "system", Content: sysprompt}}, fewShotPriming(c.model)...)
+	msgs := append([]Message{{Role: "system", Content: sysprompt}}, fewShotPriming(tier)...)
 	msgs = append(msgs, Message{Role: "user", Content: prompt})
 
 	maxTurns := c.maxTurns
@@ -62,7 +63,7 @@ func runPrint(c appConfig, proc inferProc) error {
 			// Use streaming inference. Tokens for tool-call turns are buffered
 			// (not written to stdout). Tokens for the final answer go to stdout.
 			var buf strings.Builder
-			_, _, err := lp.inferStream(msgsWithFormatNudge(msgs, c.model), 1024, 0.2, &buf)
+			_, _, err := lp.inferStream(msgsWithFormatNudge(msgs, tier), 1024, 0.2, &buf)
 			if err != nil {
 				return fmt.Errorf("inference: %w", err)
 			}
@@ -80,7 +81,7 @@ func runPrint(c appConfig, proc inferProc) error {
 				// The model is already primed; this second call should reproduce
 				// the same reply (temperature 0.2 is low but not zero, so not
 				// guaranteed identical — acceptable trade-off vs. buffering).
-				_, _, err = lp.inferStream(msgsWithFormatNudge(msgs, c.model), 1024, 0.2, os.Stdout)
+				_, _, err = lp.inferStream(msgsWithFormatNudge(msgs, tier), 1024, 0.2, os.Stdout)
 				if err != nil {
 					return fmt.Errorf("inference (stream): %w", err)
 				}
@@ -104,7 +105,7 @@ func runPrint(c appConfig, proc inferProc) error {
 		}
 
 		// Blocking inference (default).
-		ir, err := proc.infer(msgsWithFormatNudge(msgs, c.model), 1024, 0.2)
+		ir, err := proc.infer(msgsWithFormatNudge(msgs, tier), 1024, 0.2)
 		if err != nil {
 			return fmt.Errorf("inference: %w", err)
 		}

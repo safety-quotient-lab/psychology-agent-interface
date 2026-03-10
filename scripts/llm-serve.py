@@ -54,15 +54,19 @@ if os.path.exists(_devvars):
             _k, _, _v = _line.strip().partition("=")
             os.environ.setdefault(_k.strip(), _v.strip())
 
-MODELS = {
-    "qwen-0.5b": ("Qwen/Qwen2.5-0.5B-Instruct",          "fp16", False),
-    "qwen-1.5b": ("Qwen/Qwen2.5-1.5B-Instruct",          "fp16", False),
-    "qwen-3b":   ("Qwen/Qwen2.5-3B-Instruct",            "fp16", False),
-    "smollm2":   ("HuggingFaceTB/SmolLM2-1.7B-Instruct", "fp16", False),
-    "gemma-2b":  ("google/gemma-2-2b-it",                 "fp16", True),
-    "llama-1b":  ("meta-llama/Llama-3.2-1B-Instruct",    "fp16", True),
-    "llama-3b":  ("meta-llama/Llama-3.2-3B-Instruct",    "fp16", True),
-}
+def _load_catalog():
+    """Load model catalog from models.json (single source of truth)."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    catalog_path = os.path.join(script_dir, "..", "models.json")
+    with open(catalog_path) as f:
+        entries = json.load(f)
+    # Convert to dict keyed by model key: (huggingface_id, dtype, gated)
+    return {
+        e["key"]: (e["huggingface"], e["dtype"], e["gated"])
+        for e in entries
+    }, {e["key"]: e for e in entries}
+
+MODELS, MODEL_CATALOG = _load_catalog()
 
 TOOLS = [
     {
@@ -225,8 +229,12 @@ def load_model(key, quant=None):
         # MPS / CPU: device_map not supported; quantization requires bitsandbytes+CUDA.
         if quant:
             print(f"WARNING: quantization not supported on {DEVICE} — ignoring --quant", file=sys.stderr, flush=True)
+        # Use float32 on MPS — torch 2.10+ MPS attention overflows fp16 at
+        # longer context lengths (>~1000 tokens), producing NaN. Float32 doubles
+        # memory but these models are small enough (<6 GB even at float32).
+        dtype = torch.float32 if DEVICE == "mps" else torch.float16
         model = AutoModelForCausalLM.from_pretrained(
-            model_id, torch_dtype=torch.float16, token=hf_token,
+            model_id, torch_dtype=dtype, token=hf_token,
         ).to(DEVICE)
 
     _progress(85, "model loaded")
@@ -336,11 +344,11 @@ def main():
     except Exception:
         use_native = False
 
-    # Llama 3.2 native tool template adds ~1000 tokens of overhead (JSON schemas
-    # repeated in a special format). On MPS with fp16, this pushes longer prompts
-    # past the point where attention scores overflow to NaN. ReAct mode avoids
-    # this by keeping tool instructions in plain text within the system prompt.
-    if use_native and DEVICE == "mps" and "llama" in args.model:
+    # Some models produce NaN with native tool templates on MPS + fp16 (the
+    # template inflates prompts past the fp16 precision boundary). The catalog
+    # flags these as mps_native_stable=false.
+    spec = MODEL_CATALOG.get(args.model, {})
+    if use_native and DEVICE == "mps" and not spec.get("mps_native_stable", True):
         use_native = False
         print(f"NOTE: forcing ReAct mode for {args.model} on MPS (fp16 stability)", file=sys.stderr, flush=True)
 
