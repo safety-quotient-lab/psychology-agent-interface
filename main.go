@@ -19,6 +19,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/config"
+	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
 	"github.com/spf13/cobra"
 )
 
@@ -82,18 +83,22 @@ func startSidecarQuant(model, projectRoot, quant string) (*llmProc, error) {
 }
 
 // readReady reads the startup handshake from the sidecar (blocking).
+// Skips any progress lines emitted before the ready payload.
 func (p *llmProc) readReady() (readyPayload, error) {
-	if !p.stdout.Scan() {
-		if err := p.stdout.Err(); err != nil {
-			return readyPayload{}, fmt.Errorf("sidecar read: %w", err)
+	for p.stdout.Scan() {
+		var msg readyPayload
+		if err := json.Unmarshal(p.stdout.Bytes(), &msg); err != nil {
+			return readyPayload{}, fmt.Errorf("parse ready handshake: %w", err)
 		}
-		return readyPayload{}, fmt.Errorf("sidecar closed before ready")
+		if msg.Status == "ready" {
+			return msg, nil
+		}
+		// Progress line — skip and read next
 	}
-	var msg readyPayload
-	if err := json.Unmarshal(p.stdout.Bytes(), &msg); err != nil {
-		return readyPayload{}, fmt.Errorf("parse ready handshake: %w", err)
+	if err := p.stdout.Err(); err != nil {
+		return readyPayload{}, fmt.Errorf("sidecar read: %w", err)
 	}
-	return msg, nil
+	return readyPayload{}, fmt.Errorf("sidecar closed before ready")
 }
 
 // sendInfer sends one inference request and reads the response (blocking).
@@ -495,6 +500,7 @@ func main() {
 }
 
 func run(c appConfig) error {
+	plog.L.Info("pai starting", "model", c.model, "cwd", c.cwd)
 	// Load .dev.vars from home → cwd chain; closer files override outer ones.
 	home, _ := os.UserHomeDir()
 	var devVarsDirs []string
@@ -559,6 +565,7 @@ func run(c appConfig) error {
 			return fmt.Errorf("SSH tunnel to %s: %w", c.gateway, err)
 		}
 		defer tunnel.Process.Kill() //nolint:errcheck
+		plog.L.Info("ssh tunnel opened", "host", c.gateway)
 		proc = &httpProc{
 			baseURL: "http://127.0.0.1:7705",
 			model:   c.model,
@@ -571,6 +578,7 @@ func run(c appConfig) error {
 			return fmt.Errorf("failed to start llm-serve.py: %w", err)
 		}
 		defer sp.cmd.Process.Kill() //nolint:errcheck
+		plog.L.Info("sidecar started", "model", c.model)
 		proc = sp
 	}
 

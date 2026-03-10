@@ -8,13 +8,77 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wordwrap"
+	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/style"
 )
+
+// ── Keybindings ──────────────────────────────────────────────────────────────
+
+type keyBindings struct {
+	Submit   key.Binding
+	Newline  key.Binding
+	Abort    key.Binding
+	Quit     key.Binding
+	Detail   key.Binding
+	History  key.Binding
+	Scroll   key.Binding
+	Approve  key.Binding
+	Deny     key.Binding
+	Select   key.Binding
+	Navigate key.Binding
+}
+
+func newKeyBindings() keyBindings {
+	return keyBindings{
+		Submit:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
+		Newline:  key.NewBinding(key.WithKeys("shift+enter"), key.WithHelp("shift+enter", "newline")),
+		Abort:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "abort")),
+		Quit:     key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
+		Detail:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("ctrl+o", "detail")),
+		History:  key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "history")),
+		Scroll:   key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/dn", "scroll")),
+		Approve:  key.NewBinding(key.WithKeys("y"), key.WithHelp("y/n", "approve/deny")),
+		Deny:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "deny")),
+		Select:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+		Navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "navigate")),
+	}
+}
+
+// stateHelp returns the keybinding hints for the current state.
+func (m Model) stateHelp() []key.Binding {
+	switch m.state {
+	case stateInput:
+		return []key.Binding{m.keys.Submit, m.keys.Newline, m.keys.History, m.keys.Detail, m.keys.Scroll, m.keys.Quit}
+	case stateThinking:
+		return []key.Binding{m.keys.Abort, m.keys.Quit}
+	case stateReview:
+		return []key.Binding{m.keys.Abort, m.keys.Quit}
+	case stateConfirm:
+		return []key.Binding{m.keys.Approve, m.keys.Quit}
+	case stateAskUser:
+		return []key.Binding{m.keys.Submit, m.keys.Quit}
+	case stateModelSelect:
+		return []key.Binding{m.keys.Navigate, m.keys.Select, m.keys.Abort, m.keys.Quit}
+	default:
+		return []key.Binding{m.keys.Quit}
+	}
+}
+
+// helpKeyMap adapts stateHelp for the help.Model interface.
+type helpKeyMap struct{ bindings []key.Binding }
+
+func (h helpKeyMap) ShortHelp() []key.Binding { return h.bindings }
+func (h helpKeyMap) FullHelp() [][]key.Binding { return [][]key.Binding{h.bindings} }
 
 // appState is the TUI state machine.
 type appState int
@@ -46,6 +110,12 @@ type msgServerReady struct {
 }
 
 type msgServerError struct{ err error }
+
+// msgLoadProgress carries incremental loading milestones from the sidecar.
+type msgLoadProgress struct {
+	pct   float64
+	stage string
+}
 
 // msgToken carries one streamed token from the sidecar.
 type msgToken struct{ token string }
@@ -162,12 +232,34 @@ type Model struct {
 	historyIdx   int    // -1 = not browsing history
 	inputDraft   string // saved current draft when history browsing begins
 
-	spinner spinner.Model
-	input   textinput.Model
-	vp      viewport.Model
-	width   int
-	height  int
-	vpReady bool
+	spinner  spinner.Model
+	input    textarea.Model
+	vp       viewport.Model
+	help     help.Model
+	keys     keyBindings
+	progress progress.Model
+	loadStage string // current loading stage label
+	width    int
+	height   int
+	vpReady  bool
+}
+
+func newTextarea() textarea.Model {
+	ta := textarea.New()
+	ta.Placeholder = "Type your message... (Shift+Enter for newline)"
+	ta.CharLimit = 0
+	ta.SetHeight(3)
+	ta.ShowLineNumbers = false
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle() // no highlight on current line
+	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
+	return ta
+}
+
+func newProgressBar() progress.Model {
+	return progress.New(
+		progress.WithDefaultGradient(),
+		progress.WithoutPercentage(),
+	)
 }
 
 func newModel(c appConfig, proc inferProc) Model {
@@ -175,11 +267,13 @@ func newModel(c appConfig, proc inferProc) Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(style.PurpleDim)
 
-	ti := textinput.New()
-	ti.Placeholder = "Type your message..."
-	ti.CharLimit = 0
+	h := help.New()
+	h.Styles.ShortKey = lipgloss.NewStyle().Foreground(style.Gray)
+	h.Styles.ShortDesc = lipgloss.NewStyle().Foreground(style.DimGray)
 
-	return Model{state: stateLoading, cfg: c, proc: proc, spinner: sp, input: ti, historyIdx: -1,
+	return Model{state: stateLoading, cfg: c, proc: proc, spinner: sp,
+		input: newTextarea(), help: h, keys: newKeyBindings(),
+		progress: newProgressBar(), historyIdx: -1,
 		skills: loadSkills(c.cwd)}
 }
 
@@ -189,9 +283,9 @@ func newModelSelector(c appConfig) Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(style.PurpleDim)
 
-	ti := textinput.New()
-	ti.Placeholder = "Type your message..."
-	ti.CharLimit = 0
+	h := help.New()
+	h.Styles.ShortKey = lipgloss.NewStyle().Foreground(style.Gray)
+	h.Styles.ShortDesc = lipgloss.NewStyle().Foreground(style.DimGray)
 
 	// Pre-select the default model in the cursor
 	cursor := 0
@@ -202,7 +296,9 @@ func newModelSelector(c appConfig) Model {
 		}
 	}
 
-	return Model{state: stateModelSelect, cfg: c, spinner: sp, input: ti, historyIdx: -1,
+	return Model{state: stateModelSelect, cfg: c, spinner: sp,
+		input: newTextarea(), help: h, keys: newKeyBindings(),
+		progress: newProgressBar(), historyIdx: -1,
 		skills: loadSkills(c.cwd), selectorCursor: cursor}
 }
 
@@ -223,7 +319,7 @@ func (m Model) Init() tea.Cmd {
 	if m.state == stateModelSelect {
 		return m.spinner.Tick
 	}
-	return tea.Batch(m.spinner.Tick, cmdWaitReady(m.proc))
+	return tea.Batch(m.spinner.Tick, cmdReadLoadLine(m.proc))
 }
 
 // tea.Cmd constructors --------------------------------------------------------
@@ -241,6 +337,38 @@ func cmdWaitReady(proc inferProc) tea.Cmd {
 	}
 }
 
+// cmdReadLoadLine reads one JSON line from the sidecar during loading.
+// Progress lines become msgLoadProgress; the ready line becomes msgServerReady.
+// For non-llmProc backends, falls back to blocking cmdWaitReady.
+func cmdReadLoadLine(proc inferProc) tea.Cmd {
+	lp, ok := proc.(*llmProc)
+	if !ok {
+		return cmdWaitReady(proc)
+	}
+	return func() tea.Msg {
+		if !lp.stdout.Scan() {
+			return msgServerError{fmt.Errorf("sidecar closed during load")}
+		}
+		raw := lp.stdout.Bytes()
+		// Try progress line first
+		var prog struct {
+			LoadingPct float64 `json:"loading_pct"`
+			Stage      string  `json:"stage"`
+		}
+		if json.Unmarshal(raw, &prog) == nil && prog.Stage != "" {
+			return msgLoadProgress{pct: prog.LoadingPct, stage: prog.Stage}
+		}
+		// Otherwise expect the ready handshake
+		var rp readyPayload
+		if err := json.Unmarshal(raw, &rp); err != nil {
+			return msgServerError{fmt.Errorf("parse load line: %w", err)}
+		}
+		return msgServerReady{
+			model: rp.Model, vramMB: rp.VramMB,
+			loadS: rp.LoadS, useNative: rp.UseNative,
+		}
+	}
+}
 
 func readStreamLine(proc *llmProc) tea.Msg {
 	if !proc.stdout.Scan() {
@@ -409,6 +537,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.help.Width = msg.Width
+		m.progress.Width = msg.Width / 3
 		if !m.vpReady {
 			m.vp = viewport.New(msg.Width, m.chatHeight())
 			m.vpReady = true
@@ -425,7 +555,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
+	case progress.FrameMsg:
+		var cmd tea.Cmd
+		progressModel, cmd := m.progress.Update(msg)
+		m.progress = progressModel.(progress.Model)
+		return m, cmd
+
+	case msgLoadProgress:
+		m.loadStage = msg.stage
+		cmd := m.progress.SetPercent(msg.pct / 100.0)
+		m.syncViewport()
+		return m, tea.Batch(cmd, cmdReadLoadLine(m.proc))
+
 	case msgServerReady:
+		m.loadStage = ""
+		plog.L.Info("model ready", "model", msg.model, "vram_mb", msg.vramMB, "native", msg.useNative)
 		m.modelName = msg.model
 		m.vramMB = msg.vramMB
 		m.loadS = msg.loadS
@@ -462,7 +606,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.displayLines = append(m.displayLines,
 			style.Dim.Render(fmt.Sprintf("starting %s...", m.cfg.model)), "")
 		m.syncViewport()
-		return m, cmdWaitReady(m.proc)
+		return m, cmdReadLoadLine(m.proc)
 
 	case msgServerError:
 		m.displayLines = append(m.displayLines, style.Error.Render("ERROR: "+msg.err.Error()))
@@ -476,9 +620,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if fl == "(no matches)" || fl == "(no output)" {
 			fl = ""
 		}
-		// Strip any existing primed list_files exchange before injecting the new one.
+		// Strip any existing primed context before injecting fresh priming.
 		// Without this, repeated cd/cwd/clear accumulate duplicate stale listings.
 		m.conversation = stripPrimedContext(m.conversation)
+		// Few-shot example first (closest to system prompt) so small models
+		// see the expected output format before tool priming inflates context.
+		m.conversation = append(m.conversation, fewShotPriming(m.modelName)...)
 		// Inject updated file listing as a primed tool-use exchange.
 		if fl != "" {
 			if m.useNative {
@@ -495,6 +642,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				)
 			}
 		}
+
 		// Now allow user input
 		m.state = stateInput
 		m.input.Focus()
@@ -530,6 +678,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewport()
 			return m, nil
 		}
+		plog.L.Debug("inference complete", "tokens", msg.tokens, "elapsed", msg.elapsed)
 
 		// Handle compaction summary inference
 		if m.pendingSummary {
@@ -580,12 +729,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		calls := m.parseCalls(reply)
 		if len(calls) == 0 {
-			clean := wordWrap(stripMarkup(reply), m.vp.Width-2)
+			clean := stripMarkup(reply)
 			if clean == "" {
-				clean = wordWrap(reply, m.vp.Width-2)
+				clean = reply
 			}
+			rendered := renderMarkdown(clean, m.vp.Width-2)
 			m.displayLines = append(m.displayLines,
-				style.Value.Render(clean),
+				rendered,
 				style.Dim.Render(fmt.Sprintf("[%d tok · %.1fs]", m.totalTokens, m.totalTime)),
 				"",
 			)
@@ -595,7 +745,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.displayLines = append(m.displayLines, style.Dim.Render("─── critic ───"))
 				m.state = stateReview
 				m.syncViewport()
-				return m, m.proc.startReview(userMsg, clean)
+				return m, m.proc.startReview(userMsg, clean) // clean = plain text for prompt
 			}
 			m.state = stateInput
 			m.syncViewport()
@@ -611,6 +761,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Tool execution complete ───────────────────────────────────────────────
 	case msgToolDone:
+		plog.L.Debug("tool done", "name", msg.name)
 		w := m.width - 4
 		if w < 20 {
 			w = 20
@@ -631,7 +782,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			BorderForeground(style.Green).
 			Padding(0, 1).
 			Width(w).
-			Render(wordWrap(display, w-4))
+			Render(wordwrap.String(display, w-4))
 
 		lines := []string{
 			style.Warning.Render("["+msg.name+"]") + " " + style.Dim.Render(string(argsJSON)),
@@ -686,7 +837,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.displayLines = append(m.displayLines, style.Success.Render("✓"), "")
 		} else {
 			m.displayLines = append(m.displayLines,
-				style.Dim.Render(wordWrap(critique, m.vp.Width-2)), "")
+				style.Dim.Render(renderMarkdown(critique, m.vp.Width-2)), "")
 		}
 		m.state = stateInput
 		m.syncViewport()
@@ -695,7 +846,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Direct shell passthrough ──────────────────────────────────────────────
 	case msgShellDirect:
 		m.displayLines = append(m.displayLines,
-			wordWrap(strings.TrimRight(msg.output, "\n"), m.vp.Width-2), "")
+			wordwrap.String(strings.TrimRight(msg.output, "\n"), m.vp.Width-2), "")
 		m.state = stateInput
 		m.syncViewport()
 		return m, nil
@@ -746,7 +897,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.displayLines = append(m.displayLines,
 						style.Dim.Render(fmt.Sprintf("switching to %s...", selected.key)), "")
 					m.syncViewport()
-					return m, cmdWaitReady(m.proc)
+					return m, cmdReadLoadLine(m.proc)
 				}
 				// Startup flow: launch sidecar for the first time
 				m.displayLines = append(m.displayLines,
@@ -781,7 +932,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.displayLines = append(m.displayLines, style.Warning.Render("⚠ aborted"), "")
 				m.state = stateLoading
 				m.syncViewport()
-				return m, cmdWaitReady(m.proc)
+				return m, cmdReadLoadLine(m.proc)
 			}
 
 		case stateReview:
@@ -795,7 +946,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.displayLines = append(m.displayLines, style.Dim.Render("[review skipped]"), "")
 				m.state = stateLoading
 				m.syncViewport()
-				return m, cmdWaitReady(m.proc)
+				return m, cmdReadLoadLine(m.proc)
 			}
 
 		case stateInput:
@@ -1218,7 +1369,7 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 		m.state = stateLoading
 		m.displayLines = append(m.displayLines,
 			style.Dim.Render(fmt.Sprintf("switching to %s...", newModel)), "")
-		return cmdWaitReady(m.proc)
+		return cmdReadLoadLine(m.proc)
 
 	case "/system":
 		arg := strings.TrimSpace(strings.TrimPrefix(text, parts[0]))
@@ -1413,6 +1564,26 @@ func (m *Model) parseCalls(reply string) []ToolCall {
 	return parseReact(reply)
 }
 
+// renderMarkdown renders markdown text to styled terminal output at the given width.
+// Falls back to plain word-wrapped text on render errors.
+func renderMarkdown(text string, width int) string {
+	if width < 10 {
+		width = 10
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return wordwrap.String(text, width)
+	}
+	out, err := r.Render(text)
+	if err != nil {
+		return wordwrap.String(text, width)
+	}
+	return strings.TrimRight(out, "\n")
+}
+
 func (m *Model) syncViewport() {
 	if !m.vpReady {
 		return
@@ -1436,13 +1607,15 @@ func (m *Model) syncViewport() {
 		if content != "" {
 			content += "\n"
 		}
-		content += style.Value.Render(string(m.streamBuf))
+		wrapped := wordwrap.String(string(m.streamBuf), m.vp.Width-2)
+		content += style.Value.Render(wrapped)
 	}
 	if len(m.reviewBuf) > 0 {
 		if content != "" {
 			content += "\n"
 		}
-		content += style.Dim.Render(string(m.reviewBuf))
+		wrapped := wordwrap.String(string(m.reviewBuf), m.vp.Width-2)
+		content += style.Dim.Render(wrapped)
 	}
 	m.vp.SetContent(content)
 	if wasAtBottom || activeStream {
@@ -1451,16 +1624,19 @@ func (m *Model) syncViewport() {
 }
 
 func (m Model) chatHeight() int {
-	inputLines := 1
-	if m.state == stateConfirm {
-		inputLines = 2 // tool detail + y/N prompt
+	// header(1) + statusLine(1) + helpBar(1) + inputArea + border padding
+	chrome := 4
+	switch m.state {
+	case stateInput, stateAskUser:
+		chrome += m.input.Height() // textarea visible lines
+	case stateConfirm:
+		chrome += 2 // tool detail + y/N prompt
+	default:
+		chrome += 1
 	}
-	if m.state == stateAskUser {
-		inputLines = 1
-	}
-	h := m.height - 3 - inputLines
-	if h < 1 {
-		h = 1
+	h := m.height - chrome
+	if h < 4 {
+		h = 4
 	}
 	return h
 }
@@ -1488,11 +1664,15 @@ func (m Model) View() string {
 	var statusLine string
 	switch m.state {
 	case stateLoading:
-		statusLine = m.spinner.View() + " " + style.Dim.Render("loading model...")
+		if m.loadStage != "" {
+			statusLine = m.spinner.View() + " " + m.progress.View() + " " + style.Dim.Render(m.loadStage)
+		} else {
+			statusLine = m.spinner.View() + " " + style.Dim.Render("loading model...")
+		}
 	case stateThinking:
-		statusLine = m.spinner.View() + " " + style.Dim.Render("thinking...  (Esc to abort)")
+		statusLine = m.spinner.View() + " " + style.Dim.Render("thinking...")
 	case stateReview:
-		statusLine = m.spinner.View() + " " + style.Dim.Render("critic reviewing...  (Esc to skip)")
+		statusLine = m.spinner.View() + " " + style.Dim.Render("critic reviewing...")
 	case stateToolRun:
 		statusLine = m.spinner.View() + " " + style.Dim.Render("running tool...")
 	case stateConfirm:
@@ -1507,12 +1687,12 @@ func (m Model) View() string {
 		}
 	}
 
+	helpBar := m.help.View(helpKeyMap{m.stateHelp()})
+
 	var inputBar string
 	switch m.state {
-	case stateInput:
-		inputBar = style.Heading.Render("> ") + m.input.View()
-	case stateAskUser:
-		inputBar = style.Heading.Render("> ") + m.input.View()
+	case stateInput, stateAskUser:
+		inputBar = m.input.View()
 	case stateConfirm:
 		if len(m.pendingTools) > m.toolIdx {
 			tool := m.pendingTools[m.toolIdx]
@@ -1522,7 +1702,7 @@ func (m Model) View() string {
 		}
 	}
 
-	parts := []string{header, m.vp.View(), statusLine}
+	parts := []string{header, m.vp.View(), statusLine, helpBar}
 	if inputBar != "" {
 		parts = append(parts, inputBar)
 	}
@@ -1691,9 +1871,61 @@ Hard refusals:
 	}
 }
 
+// fewShotPriming returns example user/assistant exchanges that demonstrate
+// the expected output format for the model's tier. Small models learn format
+// from conversation history more reliably than from system prompt rules alone.
+func fewShotPriming(model string) []Message {
+	switch model {
+	case "qwen-3b", "llama-3b", "gemma-2b":
+		// Tier 2: [OBS]/[INF] tags, confidence footer, evidence linking
+		return []Message{
+			{Role: "user", Content: "How does attachment style affect adult relationships?"},
+			{Role: "assistant", Content: `Before I answer fully — what aspect interests you most: romantic partnerships, friendships, or workplace dynamics?
+
+[OBS] Bowlby's attachment theory (1969) originally described infant-caregiver bonds. Hazan & Shaver (1987) extended this framework to adult romantic relationships.
+
+[INF] Adults with secure attachment tend to report higher relationship satisfaction, though this finding comes primarily from self-report measures, which carry response bias.
+
+[INF] Anxious and avoidant styles correlate with different conflict patterns, but correlation does not establish that attachment style *causes* those patterns — personality traits and life history also contribute.
+
+Confidence: MODERATE — well-replicated findings, but most evidence relies on self-report instruments.`},
+		}
+	case "qwen-7b", "llama-8b", "mistral-7b":
+		// Tier 3: fuller format with evidence quality
+		return []Message{
+			{Role: "user", Content: "How does attachment style affect adult relationships?"},
+			{Role: "assistant", Content: `Before answering — what aspect interests you most: romantic partnerships, friendships, or workplace dynamics? That will help me focus the analysis.
+
+[OBS] Bowlby's attachment theory (1969) described infant-caregiver bonds. Hazan & Shaver (1987) extended this to adult romantic relationships — a well-cited extension but one that assumes cross-domain transferability of a developmental construct.
+
+[INF] Adults with secure attachment tend to report higher relationship satisfaction. However, most supporting evidence comes from self-report measures (ECR, ASQ), which carry social desirability bias. Behavioral observation studies show smaller effect sizes.
+
+[INF] Anxious and avoidant styles correlate with distinct conflict patterns, but I want to flag a competing interpretation: personality traits (neuroticism, agreeableness) may account for substantial variance that gets attributed to "attachment style" when those traits go unmeasured.
+
+Confidence: MODERATE — well-replicated core findings. Evidence quality: MODERATE — heavy reliance on self-report; limited longitudinal data on causal mechanisms.`},
+		}
+	default:
+		// Tier 1 (≤2B): minimal example — just enough to show the format
+		return []Message{
+			{Role: "user", Content: "What causes stress?"},
+			{Role: "assistant", Content: `Could you clarify — work stress, academic stress, or general life stress?
+
+[observation] Selye (1956) defined stress as the body's non-specific response to demand.
+
+[inference] Modern research suggests both external events and personal appraisal contribute. The same event affects different people differently.
+
+Confidence: high`},
+		}
+	}
+}
+
 // reactSystem returns the system prompt for models without native tool calling.
 // Combines the psychology-agent identity prompt with tool-calling instructions.
 func reactSystem(cwd, model, fileList, claudeMD string) string {
+	webSearchTool := ""
+	if os.Getenv("KAGI_API_KEY") != "" {
+		webSearchTool = "\n- web_search(query, [limit]): Search the web via Kagi. Returns titles, URLs, snippets. Default limit 5."
+	}
 	s := psychologyPromptTier(model) + `
 
 Working directory: ` + cwd + `
@@ -1707,8 +1939,7 @@ Available tools:
 - edit_file(path, old_str, new_str): Replace the first occurrence of old_str with new_str. old_str must match exactly (whitespace matters). Prefer this over write_file for targeted edits.
 - list_files(pattern): List files matching a glob pattern. Use "*.ext" for current dir, "**/*.ext" to recurse.
 - search(pattern): Search for a regex pattern in files (like grep -rn).
-- fetch_url(url): Fetch a URL and return its content as plain text. Use for docs, GitHub issues, paste links.
-- web_search(query, [limit]): Search the web via Kagi. Returns titles, URLs, snippets. Default limit 5.
+- fetch_url(url): Fetch a URL and return its content as plain text. Use for docs, GitHub issues, paste links.` + webSearchTool + `
 - ask_user(question): Ask the user a clarifying question and get their answer.
 
 To call a tool, output EXACTLY this format on its own line (nothing else on that line):
@@ -1728,10 +1959,14 @@ When finished, write your final answer with no TOOL_CALL lines.`
 // nativeSystem returns the system prompt for models with native tool calling.
 // Combines psychology-agent identity with tool orientation.
 func nativeSystem(cwd, model, fileList, claudeMD string) string {
+	toolList := "shell, read_file, write_file, edit_file, list_files, search, fetch_url, ask_user"
+	if os.Getenv("KAGI_API_KEY") != "" {
+		toolList = "shell, read_file, write_file, edit_file, list_files, search, fetch_url, web_search, ask_user"
+	}
 	s := psychologyPromptTier(model) + `
 
 Working directory: ` + cwd + `
-You have tools: shell, read_file, write_file, edit_file, list_files, search, fetch_url, web_search, ask_user.
+You have tools: ` + toolList + `.
 Use tools when you need to investigate files or run commands.`
 	if fileList != "" {
 		s += "\n\nFiles in working directory:\n" + fileList

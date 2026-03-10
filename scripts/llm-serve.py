@@ -189,14 +189,24 @@ TOOLS = [
 ]
 
 
+def _progress(pct, stage):
+    """Emit a loading progress milestone to stdout (consumed by Go TUI)."""
+    print(json.dumps({"loading_pct": pct, "stage": stage}), flush=True)
+
+
 def load_model(key, quant=None):
     import torch
+
+    _progress(0, "importing transformers...")
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     model_id, _, _ = MODELS[key]
     hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_KEY")
+
+    _progress(10, "loading tokenizer...")
     tok = AutoTokenizer.from_pretrained(model_id, token=hf_token)
 
+    _progress(25, "loading model weights...")
     if DEVICE == "cuda":
         # CUDA: device_map handles multi-GPU placement; BitsAndBytes quantization available.
         from transformers import BitsAndBytesConfig
@@ -219,6 +229,7 @@ def load_model(key, quant=None):
             model_id, torch_dtype=torch.float16, token=hf_token,
         ).to(DEVICE)
 
+    _progress(85, "model loaded")
     return model, tok
 
 
@@ -315,6 +326,7 @@ def main():
     load_s = time.perf_counter() - t0
 
     # Probe native tool-calling support
+    _progress(90, "probing tool support...")
     use_native = True
     try:
         tok.apply_chat_template(

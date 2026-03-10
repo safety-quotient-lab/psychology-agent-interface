@@ -35,7 +35,8 @@ func runPrint(c appConfig, proc inferProc) error {
 	}
 	useNative := rp.UseNative
 
-	// Build system prompt with file listing.
+	// Build system prompt with file listing embedded (no separate tool priming
+	// in print mode — keeps context small for Tier 1 models).
 	fileList := executeTool("list_files", map[string]any{"pattern": "*"}, c.cwd)
 	var sysprompt string
 	if useNative {
@@ -44,27 +45,7 @@ func runPrint(c appConfig, proc inferProc) error {
 		sysprompt = reactSystem(c.cwd, c.model, fileList, "")
 	}
 
-	// Prime the conversation with two fake prior tool-use exchanges so small models
-	// see concrete examples of tool call format before they need to emit one.
-	// list_files first (static), then shell("pwd") → actual cwd.
-	var primed []Message
-	if useNative {
-		primed = []Message{
-			{Role: "assistant", Content: `<tool_call>{"name":"list_files","arguments":{"pattern":"*"}}</tool_call>`},
-			{Role: "tool", Name: "list_files", Content: fileList},
-			{Role: "assistant", Content: `<tool_call>{"name":"shell","arguments":{"cmd":"pwd"}}</tool_call>`},
-			{Role: "tool", Name: "shell", Content: c.cwd},
-		}
-	} else {
-		primed = []Message{
-			{Role: "assistant", Content: `TOOL_CALL: {"name": "list_files", "arguments": {"pattern": "*"}}`},
-			{Role: "user", Content: "TOOL_RESULT (list_files):\n" + fileList + "\n\nContinue."},
-			{Role: "assistant", Content: `TOOL_CALL: {"name": "shell", "arguments": {"cmd": "pwd"}}`},
-			{Role: "user", Content: "TOOL_RESULT (shell):\n" + c.cwd + "\n\nContinue."},
-		}
-	}
-
-	msgs := append([]Message{{Role: "system", Content: sysprompt}}, primed...)
+	msgs := append([]Message{{Role: "system", Content: sysprompt}}, fewShotPriming(c.model)...)
 	msgs = append(msgs, Message{Role: "user", Content: prompt})
 
 	maxTurns := c.maxTurns

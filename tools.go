@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
 )
 
 var (
@@ -72,40 +73,6 @@ func runDirectShell(text, cwd string) string {
 	return truncate(result)
 }
 
-// wordWrap wraps plain text (no ANSI codes) at width columns.
-func wordWrap(s string, width int) string {
-	if width <= 0 {
-		return s
-	}
-	var out strings.Builder
-	for i, line := range strings.Split(s, "\n") {
-		if i > 0 {
-			out.WriteByte('\n')
-		}
-		if len(line) <= width {
-			out.WriteString(line)
-			continue
-		}
-		col := 0
-		for j, word := range strings.Fields(line) {
-			wl := len(word)
-			if j == 0 {
-				out.WriteString(word)
-				col = wl
-			} else if col+1+wl > width {
-				out.WriteByte('\n')
-				out.WriteString(word)
-				col = wl
-			} else {
-				out.WriteByte(' ')
-				out.WriteString(word)
-				col += 1 + wl
-			}
-		}
-	}
-	return out.String()
-}
-
 func truncate(s string) string {
 	if len(s) > truncLimit {
 		return s[:truncLimit] + "\n[truncated]"
@@ -119,6 +86,7 @@ func executeTool(name string, args map[string]any, cwd string) string {
 }
 
 func executeToolInner(name string, args map[string]any, cwd string) string {
+	plog.L.Debug("tool exec", "name", name)
 	switch name {
 
 	case "shell":
@@ -223,7 +191,7 @@ func executeToolInner(name string, args map[string]any, cwd string) string {
 		query, _ := args["query"].(string)
 		apiKey := os.Getenv("KAGI_API_KEY")
 		if apiKey == "" {
-			return "ERROR: KAGI_API_KEY not set (add to ~/.dev.vars)"
+			return "ERROR: web_search unavailable — KAGI_API_KEY not set. Do NOT retry this tool. Answer without web search or tell the user to set KAGI_API_KEY in ~/.dev.vars."
 		}
 		limit := 5
 		if l, ok := args["limit"].(float64); ok && l > 0 {
