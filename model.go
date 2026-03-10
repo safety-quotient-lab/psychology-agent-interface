@@ -953,16 +953,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case stateThinking:
 			if msg.Type == tea.KeyEsc {
+				// Preserve partial response before aborting
+				if len(m.streamBuf) > 0 {
+					partial := stripMarkup(string(m.streamBuf))
+					if partial != "" {
+						m.displayLines = append(m.displayLines, partial)
+						m.conversation = append(m.conversation,
+							Message{Role: "assistant", Content: partial + "\n[aborted]"})
+					}
+				}
+				m.streamBuf = nil
+
 				// Abort in-flight inference
 				proc, err := m.proc.restart(m.cfg.model, m.cfg.projectRoot)
 				if err == nil {
 					m.proc = proc
 				}
-				// Remove last user message (was unresponded)
-				if len(m.conversation) > 0 && m.conversation[len(m.conversation)-1].Role == "user" {
-					m.conversation = m.conversation[:len(m.conversation)-1]
-				}
-				m.streamBuf = nil
 				m.displayLines = append(m.displayLines, style.Warning.Render("⚠ aborted"), "")
 				m.state = stateLoading
 				m.syncViewport()
