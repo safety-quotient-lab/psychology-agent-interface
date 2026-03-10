@@ -226,8 +226,9 @@ type Model struct {
 	showDetail     bool
 
 	// model selector — interactive picker for startup and /model command
-	selectorCursor int  // highlighted index in selectableModels
-	selectorReturn bool // true when opened from /model (Esc returns to stateInput)
+	selectorCursor int    // highlighted index in selectableModels
+	selectorReturn bool   // true when opened from /model (Esc returns to stateInput)
+	selectorError  string // error message displayed above model list
 
 	// input history — shell-style up/down recall
 	inputHistory []string
@@ -611,7 +612,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmdReadLoadLine(m.proc)
 
 	case msgServerError:
-		m.displayLines = append(m.displayLines, style.Error.Render("ERROR: "+msg.err.Error()), "")
+		m.selectorError = msg.err.Error()
 		m.state = stateModelSelect
 		m.selectorReturn = true
 		m.syncViewport()
@@ -866,6 +867,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyEnter:
 				selected := selectableModels[m.selectorCursor]
 				m.cfg.model = selected.key
+				m.selectorError = "" // clear any previous load error
 				if m.selectorReturn {
 					// In-session switch: restart sidecar with new model
 					m.selectorReturn = false
@@ -1706,6 +1708,10 @@ func (m Model) renderModelSelector() string {
 // renderModelSelectorFull renders the model picker using the full viewport dimensions.
 func (m Model) renderModelSelectorFull() string {
 	header := style.Title.Width(m.width).Render(" pai  select a model ")
+	errBanner := ""
+	if m.selectorError != "" {
+		errBanner = "\n" + style.Error.Render("  "+m.selectorError) + "\n"
+	}
 	content := m.renderModelPicker(m.height - 4)
 	hint := style.Dim.Render("  ↑/↓ navigate · Enter select · Esc " +
 		func() string {
@@ -1714,7 +1720,7 @@ func (m Model) renderModelSelectorFull() string {
 			}
 			return "quit"
 		}())
-	return header + "\n" + content + "\n" + hint
+	return header + errBanner + "\n" + content + "\n" + hint
 }
 
 // renderModelPicker renders the model list with the current cursor position.
