@@ -1571,7 +1571,7 @@ func renderMarkdown(text string, width int) string {
 		width = 10
 	}
 	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle("dark"),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
