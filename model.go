@@ -740,7 +740,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.totalTokens += msg.tokens
 		m.totalTime += msg.elapsed
 
-		calls := m.parseCalls(reply)
+		calls := m.turn().ParseCalls(reply)
 		if len(calls) == 0 {
 			clean := stripMarkup(reply)
 			if clean == "" {
@@ -812,14 +812,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(convResult) > convResultLimit {
 			convResult = convResult[:convResultLimit] + "\n[truncated — use read_file to see full content]"
 		}
-		if m.useNative {
-			m.conversation = append(m.conversation, Message{Role: "tool", Name: msg.name, Content: convResult})
-		} else {
-			m.conversation = append(m.conversation, Message{
-				Role:    "user",
-				Content: fmt.Sprintf("TOOL_RESULT (%s):\n%s\n\nContinue.", msg.name, convResult),
-			})
-		}
+		m.conversation = append(m.conversation, m.turn().FormatResult(msg.name, convResult))
 
 		m.toolIdx++
 		if m.toolIdx < len(m.pendingTools) {
@@ -1073,14 +1066,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.displayLines = append(m.displayLines, style.Heading.Render("> "+answer), "")
-				if m.useNative {
-					m.conversation = append(m.conversation, Message{Role: "tool", Name: "ask_user", Content: answer})
-				} else {
-					m.conversation = append(m.conversation, Message{
-						Role:    "user",
-						Content: fmt.Sprintf("TOOL_RESULT (ask_user):\n%s\n\nContinue.", answer),
-					})
-				}
+				m.conversation = append(m.conversation, m.turn().FormatResult("ask_user", answer))
 				m.toolIdx++
 				if m.toolIdx < len(m.pendingTools) {
 					cmd := m.dispatchNextTool()
@@ -1153,15 +1139,7 @@ func (m *Model) approveCurrentTool() tea.Cmd {
 func (m *Model) denyCurrentTool() tea.Cmd {
 	name := m.pendingTools[m.toolIdx].Name
 	m.displayLines = append(m.displayLines, style.Warning.Render("✗ denied: "+name), "")
-	denial := fmt.Sprintf("Tool call '%s' was denied by the user.", name)
-	if m.useNative {
-		m.conversation = append(m.conversation, Message{Role: "tool", Name: name, Content: denial})
-	} else {
-		m.conversation = append(m.conversation, Message{
-			Role:    "user",
-			Content: fmt.Sprintf("TOOL_RESULT (%s):\n%s\n\nContinue.", name, denial),
-		})
-	}
+	m.conversation = append(m.conversation, m.turn().FormatDenial(name))
 	m.toolIdx++
 	if m.toolIdx < len(m.pendingTools) {
 		return m.dispatchNextTool()
@@ -1566,11 +1544,9 @@ func lastUserMsg(conv []Message) string {
 
 // Viewport helpers ------------------------------------------------------------
 
-func (m *Model) parseCalls(reply string) []ToolCall {
-	if m.useNative {
-		return parseNative(reply)
-	}
-	return parseReact(reply)
+// turn returns a Turn configured for the current model's format mode.
+func (m *Model) turn() Turn {
+	return Turn{Native: m.useNative, CWD: m.cfg.cwd}
 }
 
 // renderMarkdown renders markdown text to styled terminal output at the given width.

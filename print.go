@@ -37,6 +37,7 @@ func runPrint(c appConfig, proc inferProc) error {
 	}
 	useNative := rp.UseNative
 	tier := c.catalog.Tier(c.model)
+	t := Turn{Native: useNative, CWD: c.cwd}
 
 	// Build namespace and system prompt with file listing embedded.
 	fileList := executeTool("list_files", map[string]any{"pattern": "*"}, c.cwd)
@@ -70,8 +71,6 @@ func runPrint(c appConfig, proc inferProc) error {
 		// Stream the final answer if requested; otherwise use blocking inference.
 		// Tool-call turns always use blocking so we can parse the full reply.
 		if c.stream && canStream {
-			// Use streaming inference. Tokens for tool-call turns are buffered
-			// (not written to stdout). Tokens for the final answer go to stdout.
 			var buf strings.Builder
 			_, _, err := lp.inferStream(nudge(msgs), 1024, 0.2, &buf)
 			if err != nil {
@@ -79,15 +78,9 @@ func runPrint(c appConfig, proc inferProc) error {
 			}
 			reply := buf.String()
 
-			var calls []ToolCall
-			if useNative {
-				calls = parseNative(reply)
-			} else {
-				calls = parseReact(reply)
-			}
-
-			if len(calls) == 0 {
-				// Final answer — re-run as streaming so the user sees tokens live.
+			results, hadTools := t.ProcessReply(reply)
+			if !hadTools {
+				// Final answer — re-run streaming to stdout.
 				_, _, err = lp.inferStream(nudge(msgs), 1024, 0.2, os.Stdout)
 				if err != nil {
 					return fmt.Errorf("inference (stream): %w", err)
@@ -97,17 +90,7 @@ func runPrint(c appConfig, proc inferProc) error {
 			}
 
 			msgs = append(msgs, Message{Role: "assistant", Content: reply})
-			for _, call := range calls {
-				result := executeTool(call.Name, call.Args, c.cwd)
-				if useNative {
-					msgs = append(msgs, Message{Role: "tool", Name: call.Name, Content: result})
-				} else {
-					msgs = append(msgs, Message{
-						Role:    "user",
-						Content: fmt.Sprintf("TOOL_RESULT (%s):\n%s\n\nContinue.", call.Name, result),
-					})
-				}
-			}
+			msgs = append(msgs, results...)
 			continue
 		}
 
@@ -121,30 +104,14 @@ func runPrint(c appConfig, proc inferProc) error {
 		}
 		reply := ir.Reply
 
-		var calls []ToolCall
-		if useNative {
-			calls = parseNative(reply)
-		} else {
-			calls = parseReact(reply)
-		}
-
-		if len(calls) == 0 {
+		results, hadTools := t.ProcessReply(reply)
+		if !hadTools {
 			fmt.Println(stripMarkup(reply))
 			return nil
 		}
 
 		msgs = append(msgs, Message{Role: "assistant", Content: reply})
-		for _, call := range calls {
-			result := executeTool(call.Name, call.Args, c.cwd)
-			if useNative {
-				msgs = append(msgs, Message{Role: "tool", Name: call.Name, Content: result})
-			} else {
-				msgs = append(msgs, Message{
-					Role:    "user",
-					Content: fmt.Sprintf("TOOL_RESULT (%s):\n%s\n\nContinue.", call.Name, result),
-				})
-			}
-		}
+		msgs = append(msgs, results...)
 	}
 
 	return fmt.Errorf("reached max-turns (%d) without a final answer", maxTurns)
