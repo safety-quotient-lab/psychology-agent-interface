@@ -49,7 +49,7 @@ func newKeyBindings() keyBindings {
 		Quit:     key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 		Detail:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("ctrl+o", "detail")),
 		History:  key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "history")),
-		Scroll:   key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/dn", "scroll")),
+		Scroll:   key.NewBinding(key.WithKeys("pgup", "pgdown", "shift+up", "shift+down"), key.WithHelp("shift+↑↓", "scroll")),
 		Approve:  key.NewBinding(key.WithKeys("y"), key.WithHelp("y/n", "approve/deny")),
 		Deny:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "deny")),
 		Select:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
@@ -556,6 +556,17 @@ func firstNLines(s string, n int) string {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	case tea.MouseMsg:
+		if m.vpReady {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.vp.LineUp(3)
+			case tea.MouseButtonWheelDown:
+				m.vp.LineDown(3)
+			}
+		}
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -1117,12 +1128,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-			case tea.KeyPgUp, tea.KeyPgDown:
+			case tea.KeyPgUp, tea.KeyPgDown, tea.KeyShiftUp, tea.KeyShiftDown:
 				// Scroll chat viewport without leaving input mode
 				if m.vpReady {
-					var cmd tea.Cmd
-					m.vp, cmd = m.vp.Update(msg)
-					return m, cmd
+					// Shift+arrow scrolls one line; pgup/pgdn scrolls a page
+					switch msg.Type {
+					case tea.KeyShiftUp:
+						m.vp.LineUp(1)
+					case tea.KeyShiftDown:
+						m.vp.LineDown(1)
+					default:
+						m.vp, _ = m.vp.Update(msg)
+					}
+					return m, nil
 				}
 
 			default:
@@ -1383,6 +1401,7 @@ func (m *Model) resetToolState() {
 	m.toolIdx = 0
 	m.pendingSummary = false
 	m.streamBuf = nil
+	m.lastToolKey = ""
 }
 
 // Slash commands --------------------------------------------------------------

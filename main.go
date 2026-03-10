@@ -611,7 +611,7 @@ func run(c appConfig) error {
 		return runPrint(c, proc)
 	}
 
-	p := tea.NewProgram(newModel(c, proc), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(c, proc), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
 
 	// Generate a session replay after the TUI exits.

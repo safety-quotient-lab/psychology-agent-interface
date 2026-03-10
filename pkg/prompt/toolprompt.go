@@ -58,7 +58,19 @@ TOOL_CALL: {"name": "tool_name", "arguments": {"arg": "value"}}
 
 IMPORTANT: After writing a TOOL_CALL line, STOP IMMEDIATELY. Do not write anything else.
 The system will execute the tool and provide the result. Never fabricate tool results.
-When finished, write your final answer with no TOOL_CALL lines.`
+When finished, write your final answer with no TOOL_CALL lines.
+
+ALWAYS use tools when the user asks to read, open, list, search, or run something.
+Never say you cannot do something — use the appropriate tool instead.
+
+Example — user asks "read main.go":
+TOOL_CALL: {"name": "read_file", "arguments": {"path": "main.go"}}
+
+Example — user asks "open main.go and show the first 50 lines":
+TOOL_CALL: {"name": "read_file", "arguments": {"path": "main.go"}}
+
+Example — user asks "find all test files":
+TOOL_CALL: {"name": "list_files", "arguments": {"pattern": "**/*_test.go"}}`
 
 	return StaticToolProvider{List: list, Desc: desc}
 }
