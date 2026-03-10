@@ -42,7 +42,8 @@ Available tools:
 To call a tool, output EXACTLY this format on its own line (nothing else on that line):
 TOOL_CALL: {"name": "tool_name", "arguments": {"arg": "value"}}
 
-After each TOOL_CALL line you receive a TOOL_RESULT line. Use as many tool calls as needed.
+IMPORTANT: After writing a TOOL_CALL line, STOP IMMEDIATELY. Do not write anything else.
+The system will execute the tool and provide the result. Never fabricate tool results.
 When finished, write your final answer with no TOOL_CALL lines.`
 
 	return StaticToolProvider{List: list, Desc: desc}

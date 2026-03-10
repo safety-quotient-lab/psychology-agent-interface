@@ -254,6 +254,31 @@ def _prepare_inputs(tok, messages, use_native):
     return tok(text, return_tensors="pt").to(DEVICE)
 
 
+def _tool_call_stopper(tok, use_native, n_prompt):
+    """Return a StoppingCriteria list that halts generation after a complete
+    TOOL_CALL JSON line (ReAct format) or </tool_call> tag (native format).
+    This prevents small models from hallucinating fake TOOL_RESULT text."""
+    from transformers import StoppingCriteria, StoppingCriteriaList
+
+    # Minimum tokens before a tool call could appear (~5 tokens for "TOOL_CALL: {")
+    min_check = 5
+
+    class ToolCallStop(StoppingCriteria):
+        def __call__(self, input_ids, scores, **kwargs):
+            n_gen = input_ids.shape[1] - n_prompt
+            if n_gen < min_check:
+                return False
+            generated = tok.decode(input_ids[0, n_prompt:], skip_special_tokens=True)
+            if use_native:
+                return "</tool_call>" in generated
+            # ReAct: stop once we see TOOL_CALL: and the text ends with }
+            if "TOOL_CALL:" not in generated:
+                return False
+            return generated.rstrip().endswith("}")
+
+    return StoppingCriteriaList([ToolCallStop()])
+
+
 def generate(model, tok, messages, use_native, max_tokens=1024, temperature=0.2):
     import torch
 
@@ -267,6 +292,7 @@ def generate(model, tok, messages, use_native, max_tokens=1024, temperature=0.2)
             do_sample=(temperature > 0),
             temperature=temperature if temperature > 0 else None,
             pad_token_id=tok.eos_token_id,
+            stopping_criteria=_tool_call_stopper(tok, use_native, n_in),
         )
     elapsed = time.perf_counter() - t0
     reply = tok.decode(out[0][n_in:], skip_special_tokens=True).strip()
@@ -282,6 +308,7 @@ def generate_stream(model, tok, messages, use_native, max_tokens=1024, temperatu
     from transformers import TextIteratorStreamer
 
     inputs = _prepare_inputs(tok, messages, use_native)
+    n_in = inputs.input_ids.shape[1]
     streamer = TextIteratorStreamer(tok, skip_prompt=True, skip_special_tokens=True)
     gen_kwargs = {
         **inputs,
@@ -290,6 +317,7 @@ def generate_stream(model, tok, messages, use_native, max_tokens=1024, temperatu
         "temperature": temperature if temperature > 0 else None,
         "pad_token_id": tok.eos_token_id,
         "streamer": streamer,
+        "stopping_criteria": _tool_call_stopper(tok, use_native, n_in),
     }
     del inputs
 
