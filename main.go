@@ -554,7 +554,7 @@ func run(c appConfig) error {
 	// Interactive model selector: when --model not explicitly set and in TUI mode,
 	// launch the TUI with the model picker before starting the sidecar.
 	if !c.modelSet && !c.print {
-		p := tea.NewProgram(newModelSelector(c), tea.WithAltScreen(), tea.WithMouseCellMotion())
+		p := tea.NewProgram(newModelSelector(c), tea.WithAltScreen())
 		finalModel, err := p.Run()
 		if err != nil {
 			return err
@@ -606,7 +606,7 @@ func run(c appConfig) error {
 		return runPrint(c, proc)
 	}
 
-	p := tea.NewProgram(newModel(c, proc), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(newModel(c, proc), tea.WithAltScreen())
 	finalModel, err := p.Run()
 
 	// Generate a session replay after the TUI exits.
