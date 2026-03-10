@@ -1,0 +1,6 @@
+psyai
+scripts/__pycache__/
+*.pyc
+session-*.jsonl
+session-*.html
+session-*.md
