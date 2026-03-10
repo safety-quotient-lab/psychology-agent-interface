@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/prompt"
 )
 
 // runPrint is the headless --print mode equivalent of claude -p.
@@ -12,8 +14,8 @@ import (
 // final reply to stdout. Suitable for scripting and piping.
 func runPrint(c appConfig, proc inferProc) error {
 	// Resolve prompt: from positional args, or stdin if piped.
-	prompt := strings.TrimSpace(c.prompt)
-	if prompt == "" {
+	userPrompt := strings.TrimSpace(c.prompt)
+	if userPrompt == "" {
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
 			// stdin is a pipe
@@ -21,10 +23,10 @@ func runPrint(c appConfig, proc inferProc) error {
 			if err != nil {
 				return fmt.Errorf("reading stdin: %w", err)
 			}
-			prompt = strings.TrimSpace(string(b))
+			userPrompt = strings.TrimSpace(string(b))
 		}
 	}
-	if prompt == "" {
+	if userPrompt == "" {
 		return fmt.Errorf("no prompt: pass text after flags or pipe via stdin")
 	}
 
@@ -34,24 +36,32 @@ func runPrint(c appConfig, proc inferProc) error {
 		return fmt.Errorf("backend not ready: %w", err)
 	}
 	useNative := rp.UseNative
-
-	// Build system prompt with file listing embedded (no separate tool priming
-	// in print mode — keeps context small for Tier 1 models).
 	tier := c.catalog.Tier(c.model)
-	fileList := executeTool("list_files", map[string]any{"pattern": "*"}, c.cwd)
-	var sysprompt string
-	if useNative {
-		sysprompt = nativeSystem(c.cwd, tier, fileList, "")
-	} else {
-		sysprompt = reactSystem(c.cwd, tier, fileList, "")
-	}
 
-	msgs := append([]Message{{Role: "system", Content: sysprompt}}, fewShotPriming(tier)...)
-	msgs = append(msgs, Message{Role: "user", Content: prompt})
+	// Build namespace and system prompt with file listing embedded.
+	fileList := executeTool("list_files", map[string]any{"pattern": "*"}, c.cwd)
+	ns := prompt.Namespace{
+		Identity: prompt.PsychologyIdentity{},
+		Tools:    prompt.DefaultToolProvider(),
+		Context:  &prompt.WorkspaceContext{CWD: c.cwd, Files: fileList},
+		Format:   prompt.PsychologyFormat{},
+		FewShot:  prompt.PsychologyFewShot{},
+	}
+	sysprompt, priming := ns.Build(tier, useNative)
+
+	msgs := []Message{{Role: "system", Content: sysprompt}}
+	msgs = append(msgs, promptMsgsToMain(priming)...)
+	msgs = append(msgs, Message{Role: "user", Content: userPrompt})
 
 	maxTurns := c.maxTurns
 	if maxTurns <= 0 {
 		maxTurns = 15
+	}
+
+	// nudge wraps msgs with per-turn format reinforcement.
+	nudge := func(conv []Message) []Message {
+		nudged := ns.WithNudge(mainMsgsToPrompt(conv), tier)
+		return promptMsgsToMain(nudged)
 	}
 
 	lp, canStream := proc.(*llmProc)
@@ -63,7 +73,7 @@ func runPrint(c appConfig, proc inferProc) error {
 			// Use streaming inference. Tokens for tool-call turns are buffered
 			// (not written to stdout). Tokens for the final answer go to stdout.
 			var buf strings.Builder
-			_, _, err := lp.inferStream(msgsWithFormatNudge(msgs, tier), 1024, 0.2, &buf)
+			_, _, err := lp.inferStream(nudge(msgs), 1024, 0.2, &buf)
 			if err != nil {
 				return fmt.Errorf("inference: %w", err)
 			}
@@ -78,10 +88,7 @@ func runPrint(c appConfig, proc inferProc) error {
 
 			if len(calls) == 0 {
 				// Final answer — re-run as streaming so the user sees tokens live.
-				// The model is already primed; this second call should reproduce
-				// the same reply (temperature 0.2 is low but not zero, so not
-				// guaranteed identical — acceptable trade-off vs. buffering).
-				_, _, err = lp.inferStream(msgsWithFormatNudge(msgs, tier), 1024, 0.2, os.Stdout)
+				_, _, err = lp.inferStream(nudge(msgs), 1024, 0.2, os.Stdout)
 				if err != nil {
 					return fmt.Errorf("inference (stream): %w", err)
 				}
@@ -105,7 +112,7 @@ func runPrint(c appConfig, proc inferProc) error {
 		}
 
 		// Blocking inference (default).
-		ir, err := proc.infer(msgsWithFormatNudge(msgs, tier), 1024, 0.2)
+		ir, err := proc.infer(nudge(msgs), 1024, 0.2)
 		if err != nil {
 			return fmt.Errorf("inference: %w", err)
 		}

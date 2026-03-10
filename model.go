@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/reflow/wordwrap"
 	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/prompt"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/style"
 )
 
@@ -206,6 +207,7 @@ type Model struct {
 	skills      []Skill
 	activeSkill *Skill
 	claudeMD    string // cached for system prompt rebuilds when skills change
+	ns          prompt.Namespace // prompt namespace (Plan 9 Phase 2)
 
 	// Adversarial review — streaming accumulator for critic pass
 	reviewBuf []byte
@@ -416,24 +418,56 @@ func readReviewLine(proc *llmProc) tea.Msg {
 	return msgReviewToken{token: line.Token}
 }
 
-// criticPrompt builds the Socratic follow-up prompt.
-// Instead of adversarial critique, generates deepening questions that guide
-// the user toward their own insights — the core Socratic method loop.
-func criticPrompt(userMsg, primaryReply string) string {
-	return fmt.Sprintf(`You practice the Socratic method. Review the exchange below.
-Generate 1-2 follow-up questions that:
-- Surface unstated assumptions the user might hold
-- Invite the user to examine their reasoning from a different angle
-- Gently probe for evidence behind beliefs or conclusions
+// initNamespace sets up the prompt namespace with psychology-agent providers.
+// Call after model loads and whenever context changes (cwd, skills, claudeMD).
+func (m *Model) initNamespace() {
+	m.ns = prompt.Namespace{
+		Identity: prompt.PsychologyIdentity{},
+		Tools:    prompt.DefaultToolProvider(),
+		Context:  &prompt.WorkspaceContext{CWD: m.cfg.cwd, ClaudeMD: m.claudeMD},
+		Format:   prompt.PsychologyFormat{},
+		FewShot:  prompt.PsychologyFewShot{},
+	}
+	if m.activeSkill != nil {
+		m.ns.Skill = &prompt.SkillOverlay{Name: m.activeSkill.Name, SystemPrompt: m.activeSkill.SystemPrompt}
+	}
+}
 
-Do NOT lecture, advise, or evaluate. Only ask questions.
-If the exchange reached a natural conclusion, reply with only "✓".
+// buildSystemPrompt returns the system prompt for the current namespace and mode.
+func (m *Model) buildSystemPrompt() string {
+	sys, _ := m.ns.Build(m.modelTier(), m.useNative)
+	return sys
+}
 
-User said: %s
+// buildPriming returns few-shot priming messages for the current tier.
+func (m *Model) buildPriming() []prompt.Message {
+	_, priming := m.ns.Build(m.modelTier(), m.useNative)
+	return priming
+}
 
-Assistant responded: %s
+// promptMsgsToMain converts prompt.Message slices to main-package Message slices.
+func promptMsgsToMain(pmsgs []prompt.Message) []Message {
+	out := make([]Message, len(pmsgs))
+	for i, pm := range pmsgs {
+		out[i] = Message{Role: pm.Role, Content: pm.Content, Name: pm.Name}
+	}
+	return out
+}
 
-Your follow-up questions:`, userMsg, primaryReply)
+// mainMsgsToPrompt converts main-package Message slices to prompt.Message slices.
+func mainMsgsToPrompt(msgs []Message) []prompt.Message {
+	out := make([]prompt.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = prompt.Message{Role: m.Role, Content: m.Content, Name: m.Name}
+	}
+	return out
+}
+
+// msgsWithFormatNudge returns a copy of the conversation with a transient
+// format reminder appended. The original slice remains unmodified.
+func (m *Model) msgsWithFormatNudge(conv []Message) []Message {
+	nudged := m.ns.WithNudge(mainMsgsToPrompt(conv), m.modelTier())
+	return promptMsgsToMain(nudged)
 }
 
 func cmdShellDirect(text, cwd string) tea.Cmd {
@@ -568,15 +602,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.useNative = msg.useNative
 		// Stay in stateLoading until msgAutoContext injects file context.
 		// This prevents the race where the user submits before priming is done.
-		claudeMD := loadClaudeFile(m.cfg.cwd)
-		m.claudeMD = claudeMD
-		if msg.useNative {
-			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, m.modelTier(), "", claudeMD)}}
-		} else {
-			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, m.modelTier(), "", claudeMD)}}
-		}
+		m.claudeMD = loadClaudeFile(m.cfg.cwd)
+		m.initNamespace()
+		m.conversation = []Message{{Role: "system", Content: m.buildSystemPrompt()}}
 		statusLine := fmt.Sprintf("Model loaded in %.1fs · %d MB VRAM · native=%v", msg.loadS, msg.vramMB, msg.useNative)
-		if claudeMD != "" {
+		if m.claudeMD != "" {
 			statusLine += " · CLAUDE.md loaded"
 		}
 		m.displayLines = append(m.displayLines,
@@ -618,15 +648,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.conversation = stripPrimedContext(m.conversation)
 		// Rebuild system prompt with file listing embedded directly.
 		// Avoids fake tool-call exchanges that small models mimic unprompted.
-		claudeMD := m.claudeMD
-		if m.useNative {
-			m.conversation[0].Content = nativeSystem(m.cfg.cwd, m.modelTier(), fl, claudeMD)
-		} else {
-			m.conversation[0].Content = reactSystem(m.cfg.cwd, m.modelTier(), fl, claudeMD)
+		if ctx, ok := m.ns.Context.(*prompt.WorkspaceContext); ok {
+			ctx.Files = fl
 		}
+		m.conversation[0].Content = m.buildSystemPrompt()
 		// Few-shot example right after system prompt so small models
 		// see the expected output format before any real user messages.
-		m.conversation = append(m.conversation, fewShotPriming(m.modelTier())...)
+		m.conversation = append(m.conversation, promptMsgsToMain(m.buildPriming())...)
 
 		// Now allow user input
 		m.state = stateInput
@@ -692,7 +720,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"")
 			}
 			m.syncViewport()
-			return m, m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelTier()), 1024, 0.2)
+			return m, m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.2)
 		}
 
 		m.sessionTokens += msg.tokens
@@ -976,7 +1004,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingSummary = true
 					return m, m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 				}
-				return m, m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelTier()), 1024, 0.2)
+				return m, m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.2)
 
 			case tea.KeyUp:
 				// Scroll viewport if input is empty; otherwise browse history
@@ -1158,7 +1186,7 @@ func (m *Model) finishToolBatch() tea.Cmd {
 		m.pendingSummary = true
 		return m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 	}
-	return m.proc.startInfer(msgsWithFormatNudge(m.conversation, m.modelTier()), 1024, 0.2)
+	return m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.2)
 }
 
 // Context compaction ----------------------------------------------------------
@@ -1300,13 +1328,9 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 
 	case "/clear":
 		m.resetToolState()
-		m.conversation = nil
-		claudeMD := loadClaudeFile(m.cfg.cwd)
-		if m.useNative {
-			m.conversation = []Message{{Role: "system", Content: nativeSystem(m.cfg.cwd, m.modelTier(), "", claudeMD)}}
-		} else {
-			m.conversation = []Message{{Role: "system", Content: reactSystem(m.cfg.cwd, m.modelTier(), "", claudeMD)}}
-		}
+		m.claudeMD = loadClaudeFile(m.cfg.cwd)
+		m.initNamespace()
+		m.conversation = []Message{{Role: "system", Content: m.buildSystemPrompt()}}
 		m.displayLines = []string{style.Dim.Render("(cleared)"), ""}
 		m.totalTokens = 0
 		m.totalTime = 0
@@ -1518,18 +1542,11 @@ func (m *Model) handleSkill(parts []string) {
 		style.Dim.Render(fmt.Sprintf("skill active: %s — %s", skill.ID, skill.Name)))
 }
 
-// rebuildSystemPrompt regenerates conversation[0] from the base system prompt
-// and the active skill overlay (if any). Call whenever skills change.
+// rebuildSystemPrompt regenerates conversation[0] from the namespace.
+// Call whenever skills, cwd, or claudeMD change.
 func (m *Model) rebuildSystemPrompt() {
-	var base string
-	if m.useNative {
-		base = nativeSystem(m.cfg.cwd, m.modelTier(), "", m.claudeMD)
-	} else {
-		base = reactSystem(m.cfg.cwd, m.modelTier(), "", m.claudeMD)
-	}
-	if m.activeSkill != nil {
-		base += "\n\n# Active skill: " + m.activeSkill.Name + "\n" + m.activeSkill.SystemPrompt
-	}
+	m.initNamespace()
+	base := m.buildSystemPrompt()
 	if len(m.conversation) > 0 && m.conversation[0].Role == "system" {
 		m.conversation[0].Content = base
 	} else {
@@ -1768,245 +1785,3 @@ func (m Model) renderModelPicker(maxHeight int) string {
 	return b.String()
 }
 
-// psychologyPromptTier selects the distilled psychology-agent system prompt
-// based on model parameter count. Tiers from safety-quotient-lab/psychology-agent
-// docs/prompts/ — behavioral directives sized for limited context windows.
-func psychologyPromptTier(tier int) string {
-	tier1 := `You are a psychology research assistant. You help with psychological analysis,
-research methodology, and text interpretation. You do not diagnose, prescribe,
-or deliver clinical judgments.
-
-Rules:
-1. Label every claim as [observation] or [inference]. Observations cite evidence.
-   Inferences state the reasoning.
-2. When uncertain, say "I am uncertain because..." before answering.
-3. When a question falls outside psychology, say "This falls outside my scope."
-4. Never agree just to be agreeable. If you disagree, state why.
-5. Ask one clarifying question before long answers.
-
-Format:
-- Use short paragraphs (3-4 sentences max).
-- End substantive answers with: "Confidence: high / moderate / low"
-- If multiple interpretations exist, list them. Do not pick one silently.
-
-Do not:
-- Diagnose mental health conditions
-- Claim clinical authority
-- Fabricate citations or statistics
-- Provide therapy or crisis intervention`
-
-	// Tier 2: 2B-4B params (qwen-3b, llama-3b, gemma-2b, phi3-mini)
-	tier2 := `You are the psychology agent — a collegial mentor for psychological analysis and
-research. You advise; you do not decide. The user holds final authority.
-
-Identity:
-- Role: thinking partner, not authority. Guide toward discovery, never tell.
-- Scope: psychology, research methodology, psychometric analysis, text safety.
-- When near the edge of validated knowledge, say so explicitly.
-
-Output discipline:
-1. Separate observations from inferences. Use [OBS] and [INF] tags.
-2. Link claims to evidence: "Based on [source], [claim]."
-3. State uncertainty before conclusions: "Uncertainty: [what and why]."
-4. When multiple interpretations exist, present the most parsimonious first.
-5. Chunk responses into labeled sections. Never write walls of text.
-6. End with: "Confidence: HIGH / MODERATE / LOW — [one-line basis]"
-
-Hard refusals:
-- Never diagnose. PSQ scores text, not people.
-- Never fabricate confidence where evidence lacks.
-- Never soften a position without stating what new evidence justified the change.
-- Never average conflicting sources — report the disagreement.
-- Never provide crisis intervention (direct to 988 Suicide & Crisis Lifeline).
-
-When disagreeing with the user:
-- State the evidence for your position.
-- Ask: "What evidence would change my assessment?"
-- If no new evidence appears, hold your position respectfully.`
-
-	// Tier 3: 4B-8B params (qwen-7b, llama-8b, mistral-7b)
-	tier3 := `You are the psychology agent — a collegial mentor who synthesizes across
-psychology, research methodology, and engineering. Your role: advisory,
-Socratic, discipline-first. The user decides; you analyze and challenge.
-
-Core stance:
-- Socratic: ask before concluding. Generate competing hypotheses before settling.
-- Anti-sycophancy: hold positions under pushback unless new evidence justifies
-  updating. If you update, name what changed.
-- Fair witness: report what happened, not why. Separate facts from conclusions.
-- Recommend-against: before any default action, scan for a concrete reason NOT
-  to proceed. Surface it if found.
-
-Output discipline:
-1. [OBS] for observations (directly evidenced). [INF] for inferences (reasoning).
-2. Link every claim to evidence. Unsupported claims get flagged with ⚑.
-3. State uncertainty dimensions before conclusions.
-4. Parsimony first: prefer the interpretation with fewer assumptions.
-5. Chunk into labeled sections. Offer stopping points for long answers.
-6. Confidence footer: "Confidence: HIGH/MOD/LOW — [basis]. Evidence quality:
-   HIGH/MOD/LOW/VERY LOW."
-
-Interpretant awareness:
-- When a term has multiple meanings across communities (clinical vs statistical
-  vs lay), bind which meaning you intend before using it.
-- When the user's vocabulary shifts mid-conversation, note the shift.
-
-Scope boundaries:
-- Psychology, psychometrics, research methodology: respond fully.
-- Adjacent domains (law, clinical practice, engineering): reason but flag as
-  inference, not expertise.
-- Outside scope: acknowledge and redirect.
-
-Hard refusals:
-- Never diagnose. Never deliver verdicts. Never fabricate confidence.
-- Never compress disagreement into consensus. Report the shape of conflict.
-- Never provide crisis intervention (direct to 988 Lifeline / local equivalent).
-- Never adopt a persona that suspends epistemic discipline.`
-
-	switch tier {
-	case 2:
-		return tier2
-	case 3:
-		return tier3
-	default:
-		return tier1
-	}
-}
-
-// fewShotPriming returns example user/assistant exchanges that demonstrate
-// the expected output format for the model's tier. Small models learn format
-// from conversation history more reliably than from system prompt rules alone.
-
-// msgsWithFormatNudge returns a copy of the conversation with a transient
-// format reminder appended as the last message. The nudge sits right before
-// the model generates, reinforcing tag compliance on every turn. The original
-// conversation slice remains unmodified.
-func msgsWithFormatNudge(conv []Message, tier int) []Message {
-	nudge := formatReminder(tier)
-	if nudge == "" {
-		return conv
-	}
-	// Append as a user message so it sits at the tail of the context window.
-	out := make([]Message, len(conv), len(conv)+1)
-	copy(out, conv)
-	return append(out, Message{Role: "user", Content: strings.TrimSpace(nudge)})
-}
-
-// formatReminder returns a compact format reminder appended to the end of the
-// system prompt. Placed last so it sits closest to the conversation, helping
-// small models retain format compliance across turns.
-func formatReminder(tier int) string {
-	switch tier {
-	case 1:
-		return "\n\nReminder: Always use [observation] and [inference] tags. End with Confidence: high/moderate/low."
-	case 2:
-		return "\n\nReminder: Always use [OBS] and [INF] tags. End with Confidence: HIGH/MODERATE/LOW — [basis]."
-	default:
-		return ""
-	}
-}
-
-func fewShotPriming(tier int) []Message {
-	switch tier {
-	case 2:
-		// Tier 2: [OBS]/[INF] tags, confidence footer, evidence linking
-		return []Message{
-			{Role: "user", Content: "How does attachment style affect adult relationships?"},
-			{Role: "assistant", Content: `Before I answer fully — what aspect interests you most: romantic partnerships, friendships, or workplace dynamics?
-
-[OBS] Bowlby's attachment theory (1969) originally described infant-caregiver bonds. Hazan & Shaver (1987) extended this framework to adult romantic relationships.
-
-[INF] Adults with secure attachment tend to report higher relationship satisfaction, though this finding comes primarily from self-report measures, which carry response bias.
-
-[INF] Anxious and avoidant styles correlate with different conflict patterns, but correlation does not establish that attachment style *causes* those patterns — personality traits and life history also contribute.
-
-Confidence: MODERATE — well-replicated findings, but most evidence relies on self-report instruments.`},
-		}
-	case 3:
-		// Tier 3: fuller format with evidence quality
-		return []Message{
-			{Role: "user", Content: "How does attachment style affect adult relationships?"},
-			{Role: "assistant", Content: `Before answering — what aspect interests you most: romantic partnerships, friendships, or workplace dynamics? That will help me focus the analysis.
-
-[OBS] Bowlby's attachment theory (1969) described infant-caregiver bonds. Hazan & Shaver (1987) extended this to adult romantic relationships — a well-cited extension but one that assumes cross-domain transferability of a developmental construct.
-
-[INF] Adults with secure attachment tend to report higher relationship satisfaction. However, most supporting evidence comes from self-report measures (ECR, ASQ), which carry social desirability bias. Behavioral observation studies show smaller effect sizes.
-
-[INF] Anxious and avoidant styles correlate with distinct conflict patterns, but I want to flag a competing interpretation: personality traits (neuroticism, agreeableness) may account for substantial variance that gets attributed to "attachment style" when those traits go unmeasured.
-
-Confidence: MODERATE — well-replicated core findings. Evidence quality: MODERATE — heavy reliance on self-report; limited longitudinal data on causal mechanisms.`},
-		}
-	default:
-		// Tier 1 (≤2B): minimal example — just enough to show the format
-		return []Message{
-			{Role: "user", Content: "What causes stress?"},
-			{Role: "assistant", Content: `Could you clarify — work stress, academic stress, or general life stress?
-
-[observation] Selye (1956) defined stress as the body's non-specific response to demand.
-
-[inference] Modern research suggests both external events and personal appraisal contribute. The same event affects different people differently.
-
-Confidence: high`},
-		}
-	}
-}
-
-// reactSystem returns the system prompt for models without native tool calling.
-// Combines the psychology-agent identity prompt with tool-calling instructions.
-func reactSystem(cwd string, tier int, fileList, claudeMD string) string {
-	webSearchTool := ""
-	if os.Getenv("KAGI_API_KEY") != "" {
-		webSearchTool = "\n- web_search(query, [limit]): Search the web via Kagi. Returns titles, URLs, snippets. Default limit 5."
-	}
-	s := psychologyPromptTier(tier) + `
-
-Working directory: ` + cwd + `
-
-You also have access to local tools for investigating files and running commands.
-
-Available tools:
-- shell(cmd): Execute a bash command. Returns combined stdout and stderr.
-- read_file(path): Read the full contents of a file.
-- write_file(path, content): Write content to a file (overwrites if it exists).
-- edit_file(path, old_str, new_str): Replace the first occurrence of old_str with new_str. old_str must match exactly (whitespace matters). Prefer this over write_file for targeted edits.
-- list_files(pattern): List files matching a glob pattern. Use "*.ext" for current dir, "**/*.ext" to recurse.
-- search(pattern): Search for a regex pattern in files (like grep -rn).
-- fetch_url(url): Fetch a URL and return its content as plain text. Use for docs, GitHub issues, paste links.` + webSearchTool + `
-- ask_user(question): Ask the user a clarifying question and get their answer.
-
-To call a tool, output EXACTLY this format on its own line (nothing else on that line):
-TOOL_CALL: {"name": "tool_name", "arguments": {"arg": "value"}}
-
-After each TOOL_CALL line you receive a TOOL_RESULT line. Use as many tool calls as needed.
-When finished, write your final answer with no TOOL_CALL lines.`
-	if fileList != "" {
-		s += "\n\nFiles in working directory:\n" + fileList
-	}
-	if claudeMD != "" {
-		s += "\n\n# Project instructions\n" + claudeMD
-	}
-	s += formatReminder(tier)
-	return s
-}
-
-// nativeSystem returns the system prompt for models with native tool calling.
-// Combines psychology-agent identity with tool orientation.
-func nativeSystem(cwd string, tier int, fileList, claudeMD string) string {
-	toolList := "shell, read_file, write_file, edit_file, list_files, search, fetch_url, ask_user"
-	if os.Getenv("KAGI_API_KEY") != "" {
-		toolList = "shell, read_file, write_file, edit_file, list_files, search, fetch_url, web_search, ask_user"
-	}
-	s := psychologyPromptTier(tier) + `
-
-Working directory: ` + cwd + `
-You have tools: ` + toolList + `.
-Use tools when you need to investigate files or run commands.`
-	if fileList != "" {
-		s += "\n\nFiles in working directory:\n" + fileList
-	}
-	if claudeMD != "" {
-		s += "\n\n# Project instructions\n" + claudeMD
-	}
-	s += formatReminder(tier)
-	return s
-}

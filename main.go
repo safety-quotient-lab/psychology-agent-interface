@@ -21,6 +21,7 @@ import (
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/catalog"
 	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/config"
 	plog "github.com/safety-quotient-lab/psychology-agent-interface/pkg/log"
+	"github.com/safety-quotient-lab/psychology-agent-interface/pkg/prompt"
 	"github.com/spf13/cobra"
 )
 
@@ -206,7 +207,7 @@ func (p *llmProc) nextToken() tea.Cmd {
 }
 
 func (p *llmProc) startReview(userMsg, primaryReply string) tea.Cmd {
-	msgs := []Message{{Role: "user", Content: criticPrompt(userMsg, primaryReply)}}
+	msgs := []Message{{Role: "user", Content: prompt.CriticPrompt(userMsg, primaryReply)}}
 	return func() tea.Msg {
 		b, err := json.Marshal(inferRequest{Messages: msgs, MaxTokens: 512, Temperature: 0.1, Stream: true})
 		if err != nil {
@@ -384,7 +385,7 @@ func (p *httpProc) nextToken() tea.Cmd {
 }
 
 func (p *httpProc) startReview(userMsg, primaryReply string) tea.Cmd {
-	msgs := []Message{{Role: "user", Content: criticPrompt(userMsg, primaryReply)}}
+	msgs := []Message{{Role: "user", Content: prompt.CriticPrompt(userMsg, primaryReply)}}
 	return func() tea.Msg {
 		if err := p.openStream(msgs, 512, 0.1); err != nil {
 			return msgReviewDone{err: err}
