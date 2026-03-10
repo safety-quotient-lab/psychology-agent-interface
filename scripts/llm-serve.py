@@ -336,6 +336,14 @@ def main():
     except Exception:
         use_native = False
 
+    # Llama 3.2 native tool template adds ~1000 tokens of overhead (JSON schemas
+    # repeated in a special format). On MPS with fp16, this pushes longer prompts
+    # past the point where attention scores overflow to NaN. ReAct mode avoids
+    # this by keeping tool instructions in plain text within the system prompt.
+    if use_native and DEVICE == "mps" and "llama" in args.model:
+        use_native = False
+        print(f"NOTE: forcing ReAct mode for {args.model} on MPS (fp16 stability)", file=sys.stderr, flush=True)
+
     # Ready handshake
     print(json.dumps({
         "status":     "ready",
