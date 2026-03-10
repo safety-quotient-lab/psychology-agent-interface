@@ -64,6 +64,17 @@
 - [ ] **SwiftUI MVP** — llama.cpp backend, glass UI, conversational core. Phases
       defined in `docs/ios-sketch.md`.
 
+## LSP Integration
+
+- [x] **gopls integration** — Done. `pkg/lsp/client.go` manages gopls subprocess
+      via JSON-RPC over stdin/stdout. Four read-only tools registered:
+      `lsp_definition`, `lsp_references`, `lsp_hover`, `lsp_diagnostics`.
+      Conditional — tools only register when gopls available.
+- [x] **Registry memoization** — Done. `defaultRegistry()` now cached; avoids
+      re-registering 13+ tools on every `executeTool()` call.
+- [ ] **LSP live test** — Validate lsp_definition/references/hover with a running
+      gopls against this codebase. Check startup latency impact.
+
 ## Code Agent
 
 - [ ] **Go code generation and self-editing** — Extend pai to write Go code and

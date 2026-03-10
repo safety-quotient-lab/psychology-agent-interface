@@ -190,6 +190,68 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "lsp_definition",
+            "description": "Jump to the definition of a Go symbol at a given file position. Returns file:line:col.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Go source file path"},
+                    "line": {"type": "integer", "description": "Line number (1-based)"},
+                    "col":  {"type": "integer", "description": "Column number (1-based)"},
+                },
+                "required": ["path", "line", "col"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lsp_references",
+            "description": "Find all references to a Go symbol at a given file position. Returns file:line:col for each reference.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Go source file path"},
+                    "line": {"type": "integer", "description": "Line number (1-based)"},
+                    "col":  {"type": "integer", "description": "Column number (1-based)"},
+                },
+                "required": ["path", "line", "col"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lsp_hover",
+            "description": "Show type signature and documentation for a Go symbol at a given file position.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Go source file path"},
+                    "line": {"type": "integer", "description": "Line number (1-based)"},
+                    "col":  {"type": "integer", "description": "Column number (1-based)"},
+                },
+                "required": ["path", "line", "col"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lsp_diagnostics",
+            "description": "Get compiler errors and warnings for a Go source file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Go source file path"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
 ]
 
 

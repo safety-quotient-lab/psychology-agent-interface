@@ -441,7 +441,7 @@ func readReviewLine(proc *llmProc) tea.Msg {
 func (m *Model) initNamespace() {
 	m.ns = prompt.Namespace{
 		Identity: prompt.PsychologyIdentity{},
-		Tools:    prompt.DefaultToolProvider(),
+		Tools:    prompt.DefaultToolProvider(sharedLSPClient != nil),
 		Context:  &prompt.WorkspaceContext{CWD: m.cfg.cwd, ClaudeMD: m.claudeMD},
 		Format:   prompt.PsychologyFormat{},
 		FewShot:  prompt.PsychologyFewShot{},

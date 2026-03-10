@@ -536,6 +536,10 @@ func run(c appConfig) error {
 
 	c.projectRoot = findProjectRoot()
 
+	// Start LSP (gopls) for Go-aware tools. Non-blocking — skips if unavailable.
+	initLSP(c.cwd)
+	defer closeLSP()
+
 	// Load model catalog from models.json.
 	cat, err := catalog.Load(c.projectRoot)
 	if err != nil {
