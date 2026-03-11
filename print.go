@@ -43,7 +43,7 @@ func runPrint(c appConfig, proc inferProc) error {
 	fileList := executeTool("list_files", map[string]any{"pattern": "*"}, c.cwd)
 	ns := prompt.Namespace{
 		Identity: prompt.PsychologyIdentity{},
-		Tools:    prompt.DefaultToolProvider(sharedLSPClient != nil),
+		Tools:    prompt.DefaultToolProvider(tier, sharedLSPClient != nil),
 		Context:  &prompt.WorkspaceContext{CWD: c.cwd, Files: fileList},
 		Format:   prompt.PsychologyFormat{},
 		FewShot:  prompt.PsychologyFewShot{},

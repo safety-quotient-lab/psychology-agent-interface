@@ -446,7 +446,7 @@ func readReviewLine(proc *llmProc) tea.Msg {
 func (m *Model) initNamespace() {
 	m.ns = prompt.Namespace{
 		Identity: prompt.PsychologyIdentity{},
-		Tools:    prompt.DefaultToolProvider(sharedLSPClient != nil),
+		Tools:    prompt.DefaultToolProvider(m.modelTier(), sharedLSPClient != nil),
 		Context:  &prompt.WorkspaceContext{CWD: m.cfg.cwd, ClaudeMD: m.claudeMD},
 		Format:   prompt.PsychologyFormat{},
 		FewShot:  prompt.PsychologyFewShot{},
@@ -748,6 +748,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"")
 			}
 			m.syncViewport()
+			m.trimToFit()
 			return m, m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.7)
 		}
 
@@ -1086,6 +1087,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingSummary = true
 					return m, m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 				}
+				m.trimToFit()
 				return m, m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.7)
 
 			case tea.KeyUp:
@@ -1272,6 +1274,7 @@ func (m *Model) finishToolBatch() tea.Cmd {
 		m.pendingSummary = true
 		return m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 	}
+	m.trimToFit()
 	return m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.7)
 }
 
@@ -1316,6 +1319,23 @@ func (m *Model) compactIfNeeded() []Message {
 	m.displayLines = append(m.displayLines,
 		style.Dim.Render(fmt.Sprintf("[context compacted — removed %d old messages, summarising...]", trimCount)), "")
 	return removed
+}
+
+// trimToFit drops the oldest non-system messages until the conversation fits
+// within the model's context window. Acts as a hard safety net after compaction
+// — prevents sending oversized conversations to the sidecar.
+func (m *Model) trimToFit() {
+	limit := m.cfg.catalog.ContextLimit(m.modelName)
+	maxTokens := limit - tokenReserve
+	for estimateTokens(m.conversation) > maxTokens && len(m.conversation) > 2 {
+		// Find first non-system message to drop.
+		for i := range m.conversation {
+			if m.conversation[i].Role != "system" {
+				m.conversation = append(m.conversation[:i], m.conversation[i+1:]...)
+				break
+			}
+		}
+	}
 }
 
 // makeSummaryMsgs builds a single-message conversation asking the LLM to summarise removed messages.

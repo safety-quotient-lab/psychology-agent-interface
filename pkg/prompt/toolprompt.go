@@ -15,7 +15,8 @@ func (s StaticToolProvider) ToolDescriptions() string { return s.Desc }
 // DefaultToolProvider returns a StaticToolProvider with the standard tool set.
 // Includes web_search only when KAGI_API_KEY exists in the environment.
 // Includes LSP tools when hasLSP true (gopls running).
-func DefaultToolProvider(hasLSP ...bool) StaticToolProvider {
+// Tier 1 models get compact descriptions to conserve context window tokens.
+func DefaultToolProvider(tier int, hasLSP ...bool) StaticToolProvider {
 	hasKagi := os.Getenv("KAGI_API_KEY") != ""
 	lsp := len(hasLSP) > 0 && hasLSP[0]
 
@@ -29,7 +30,28 @@ func DefaultToolProvider(hasLSP ...bool) StaticToolProvider {
 
 	webSearchDesc := ""
 	if hasKagi {
-		webSearchDesc = "\n- web_search(query, [limit]): Search the web via Kagi. Returns titles, URLs, snippets. Default limit 5."
+		webSearchDesc = "\n- web_search(query, [limit]): Search the web. Returns titles, URLs, snippets."
+	}
+
+	// Tier 1 (≤2B params): compact descriptions save ~250 tokens on 4K models.
+	if tier <= 1 {
+		desc := `Tools (call one per turn):
+- shell(cmd): Run a bash command.
+- read_file(path): Read a file.
+- write_file(path, content): Write a file.
+- edit_file(path, old_str, new_str): Replace text in a file.
+- list_files(pattern): List files matching a glob.
+- search(pattern): Regex search in files.
+- fetch_url(url): Fetch a URL as text.` + webSearchDesc + `
+- ask_user(question): Ask the user a question.
+
+Format: TOOL_CALL: {"name": "tool_name", "arguments": {"arg": "value"}}
+After TOOL_CALL, STOP. Do not fabricate results. Use tools when asked to read, search, or run something.
+When you do not know something, use fetch_url or web_search.
+
+Example: TOOL_CALL: {"name": "read_file", "arguments": {"path": "main.go"}}
+Example: TOOL_CALL: {"name": "list_files", "arguments": {"pattern": "**/*_test.go"}}`
+		return StaticToolProvider{List: list, Desc: desc}
 	}
 
 	lspDesc := ""

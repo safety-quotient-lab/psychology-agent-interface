@@ -28,6 +28,22 @@
       conservative limits trigger early compaction (4K for qwen-0.5b/smollm2/gemma-2b).
 - [x] **Token budget / context overflow guard** — Done (39cfa54). estimateTokens()
       checks conversation size before each inference; compacts when approaching limit.
+- [ ] **Prompt token budget audit** — System prompt consumes ~1471 tokens
+      (identity 387 + tools 536 + files 413 + few-shot 91 + cwd 21 + nudge 23).
+      On 4K models (qwen-0.5b, smollm2, gemma-2b) this leaves only ~1425 tokens
+      for conversation (~7 turns). Investigate: tier-1-only slim tool descriptions,
+      truncating file listing to top-N files, dropping few-shot on repeat turns.
+- [ ] **Pre-send token guard** — Currently Go sends the full conversation to the
+      sidecar without verifying token count fits. If compaction fires but the
+      remaining messages still exceed context, the sidecar fails fatally. Add a
+      hard token check before each `startInfer` call.
+- [ ] **Summary quality on small models** — Compaction summarizes removed messages
+      via the same small model at temperature 0.2. On sub-2B models the summary
+      may lose critical Socratic thread context. Evaluate summary fidelity or
+      consider a sliding-window approach that keeps raw messages instead.
+- [ ] **File listing scaling** — 72 files = ~413 tokens. Larger projects would
+      consume even more. Consider capping file listing to top-level + recent files,
+      or omitting from system prompt and relying on `list_files` tool instead.
 
 ## TUI
 
@@ -100,3 +116,35 @@
       - Safety: require approval for `write_file`/`edit_file` (already gated),
         add `go vet` as post-write validation before committing
       - Consider a `/dev` skill that activates the full development toolchain
+
+## Quality Evaluation
+
+- [ ] **Socratic quality rubric** — Define a scoring rubric: (1) includes substance
+      before question, (2) asks a deepening question, (3) avoids diagnosing,
+      (4) uses APA citations when citing research, (5) uses tools when uncertain.
+      Score 20 test prompts per tier to establish a baseline. Without measurement,
+      prompt changes remain guesswork.
+- [ ] **Tool call reliability matrix** — Benchmark each model × tool combination
+      for success rate. Track: correct JSON format, correct argument types,
+      hallucinated results, loop frequency. Identifies where to focus guardrails.
+
+## Robustness
+
+- [ ] **Graceful degradation catalog** — Map failure modes to recovery paths:
+      sidecar crash mid-inference, garbage output, partial tool call, OOM kill,
+      tokenization failure (context too long). Each deserves a specific recovery
+      rather than a generic error message.
+- [ ] **Structured output for tool calls** — Evaluate whether JSON-mode generation
+      (constrained decoding) reduces TOOL_CALL parsing failures vs. free-text
+      detection. Especially relevant for smollm2 and gemma-2b which lack native
+      tool call support.
+
+## Model Selection
+
+- [ ] **Tier boundary validation** — Current boundaries (Tier 1 ≤2B, Tier 2 2B-4B,
+      Tier 3 4B-8B) follow parameter count. Validate against observed Socratic
+      quality — a 1.5B model with good instruction-following may outperform a 3B
+      model with poor format adherence. Consider quality-based tier assignment.
+- [ ] **Fine-tuning evaluation** — Research (EULER methodology, DPO) shows
+      fine-tuning dramatically improves Socratic behavior in small models.
+      Evaluate whether fine-tuning one model beats prompt-engineering across six.
