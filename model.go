@@ -782,7 +782,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncViewport()
 				return m, nil
 			}
-			rendered := renderMarkdown(clean, m.vp.Width-6)
+			rendered := renderMarkdown(clean, m.vp.Width-2)
 			m.displayLines = append(m.displayLines,
 				rendered,
 				style.Dim.Render(fmt.Sprintf("[%d tok · %.1fs]", m.totalTokens, m.totalTime)),
@@ -1678,6 +1678,7 @@ func renderMarkdown(text string, width int) string {
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle("dark"),
 		glamour.WithWordWrap(width),
+		glamour.WithStylesFromJSONBytes([]byte(`{"document":{"margin":0}}`)),
 	)
 	if err != nil {
 		return wordwrap.String(text, width)
