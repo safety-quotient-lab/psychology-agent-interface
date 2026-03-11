@@ -61,7 +61,8 @@ The system will execute the tool and provide the result. Never fabricate tool re
 When finished, write your final answer with no TOOL_CALL lines.
 
 ALWAYS use tools when the user asks to read, open, list, search, or run something.
-Never say you cannot do something — use the appropriate tool instead.
+When you do not know a term, concept, or fact, use fetch_url or web_search to research it.
+Never say "I don't know" or "I cannot" — use the appropriate tool instead.
 
 Example — user asks "read main.go":
 TOOL_CALL: {"name": "read_file", "arguments": {"path": "main.go"}}
@@ -70,7 +71,10 @@ Example — user asks "open main.go and show the first 50 lines":
 TOOL_CALL: {"name": "read_file", "arguments": {"path": "main.go"}}
 
 Example — user asks "find all test files":
-TOOL_CALL: {"name": "list_files", "arguments": {"pattern": "**/*_test.go"}}`
+TOOL_CALL: {"name": "list_files", "arguments": {"pattern": "**/*_test.go"}}
+
+Example — user mentions something you don't know about:
+TOOL_CALL: {"name": "web_search", "arguments": {"query": "ICESCR international covenant"}}`
 
 	return StaticToolProvider{List: list, Desc: desc}
 }

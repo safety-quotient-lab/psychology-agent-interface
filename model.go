@@ -748,7 +748,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"")
 			}
 			m.syncViewport()
-			return m, m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.2)
+			return m, m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.7)
 		}
 
 		m.sessionTokens += msg.tokens
@@ -782,7 +782,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncViewport()
 				return m, nil
 			}
-			rendered := renderMarkdown(clean, m.vp.Width-2)
+			rendered := renderMarkdown(clean, m.vp.Width-6)
 			m.displayLines = append(m.displayLines,
 				rendered,
 				style.Dim.Render(fmt.Sprintf("[%d tok · %.1fs]", m.totalTokens, m.totalTime)),
@@ -906,7 +906,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.displayLines = append(m.displayLines, style.Success.Render("✓"), "")
 		} else {
 			m.displayLines = append(m.displayLines,
-				style.Dim.Render(renderMarkdown(critique, m.vp.Width-2)), "")
+				style.Dim.Render(renderMarkdown(critique, m.vp.Width-6)), "")
 		}
 		m.returnToInput()
 		m.syncViewport()
@@ -1086,7 +1086,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingSummary = true
 					return m, m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 				}
-				return m, m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.2)
+				return m, m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.7)
 
 			case tea.KeyUp:
 				// Scroll viewport if input is empty; otherwise browse history
@@ -1272,7 +1272,7 @@ func (m *Model) finishToolBatch() tea.Cmd {
 		m.pendingSummary = true
 		return m.proc.startInfer(makeSummaryMsgs(removed), 1024, 0.2)
 	}
-	return m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.2)
+	return m.proc.startInfer(m.msgsWithFormatNudge(m.conversation), 1024, 0.7)
 }
 
 // Context compaction ----------------------------------------------------------
@@ -1374,7 +1374,9 @@ func (m *Model) handleCd(text string) (tea.Cmd, bool) {
 // from the conversation, identified by known sentinel user prompts.
 func stripPrimedContext(conv []Message) []Message {
 	sentinels := map[string]bool{
-		"What causes stress?":                                       true, // Tier 1
+		"What causes stress?":                                       true, // Tier 1 (legacy)
+		"Explain cognitive load theory briefly.":                     true, // Tier 1 (legacy)
+		"Why do I keep procrastinating?":                              true, // Tier 1
 		"How does attachment style affect adult relationships?":      true, // Tier 2/3
 	}
 	out := make([]Message, 0, len(conv))

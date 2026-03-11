@@ -342,7 +342,7 @@ class MLXBackend:
 
     def _make_sampler(self, temperature):
         from mlx_lm.sample_utils import make_sampler
-        return make_sampler(temp=temperature if temperature > 0 else 0.0)
+        return make_sampler(temp=temperature if temperature > 0 else 0.0, min_p=0.05)
 
     def generate(self, messages, use_native, max_tokens=1024, temperature=0.2):
         from mlx_lm import stream_generate
@@ -539,6 +539,7 @@ class TransformersBackend:
                 max_new_tokens=max_tokens,
                 do_sample=(temperature > 0),
                 temperature=temperature if temperature > 0 else None,
+                repetition_penalty=1.15,
                 pad_token_id=self.tokenizer.eos_token_id,
                 stopping_criteria=self._tool_call_stopper(use_native, n_in),
             )
@@ -561,6 +562,7 @@ class TransformersBackend:
             "max_new_tokens": max_tokens,
             "do_sample": temperature > 0,
             "temperature": temperature if temperature > 0 else None,
+            "repetition_penalty": 1.15,
             "pad_token_id": self.tokenizer.eos_token_id,
             "streamer": streamer,
             "stopping_criteria": self._tool_call_stopper(use_native, n_in),

@@ -14,7 +14,7 @@ func TestNamespaceBuildNative(t *testing.T) {
 		FewShot:  PsychologyFewShot{},
 	}
 	sys, priming := ns.Build(1, true)
-	if !strings.Contains(sys, "psychology research assistant") {
+	if !strings.Contains(sys, "Socratic psychology mentor") {
 		t.Error("expected identity in system prompt")
 	}
 	if !strings.Contains(sys, "shell, read_file") {
@@ -45,8 +45,8 @@ func TestNamespaceBuildReact(t *testing.T) {
 	if !strings.Contains(sys, "Available tools") {
 		t.Error("expected full tool descriptions in ReAct mode")
 	}
-	if !strings.Contains(sys, "[OBS]") {
-		t.Error("expected tier 2 identity")
+	if !strings.Contains(sys, "Socratic") {
+		t.Error("expected Socratic method in tier 2 identity")
 	}
 }
 
