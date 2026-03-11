@@ -540,6 +540,7 @@ class TransformersBackend:
                 do_sample=(temperature > 0),
                 temperature=temperature if temperature > 0 else None,
                 repetition_penalty=1.15,
+                no_repeat_ngram_size=5,
                 pad_token_id=self.tokenizer.eos_token_id,
                 stopping_criteria=self._tool_call_stopper(use_native, n_in),
             )
@@ -563,6 +564,7 @@ class TransformersBackend:
             "do_sample": temperature > 0,
             "temperature": temperature if temperature > 0 else None,
             "repetition_penalty": 1.15,
+            "no_repeat_ngram_size": 5,
             "pad_token_id": self.tokenizer.eos_token_id,
             "streamer": streamer,
             "stopping_criteria": self._tool_call_stopper(use_native, n_in),
