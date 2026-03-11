@@ -118,6 +118,28 @@ func (c *Catalog) ValidKeys() []string {
 	return keys
 }
 
+// RecommendedTurns returns the approximate number of user-assistant exchanges
+// before context quality degrades. Derived from context_limit minus estimated
+// system prompt overhead (~1200 tokens for tier 1, ~1500 for tier 2+) and
+// token reserve (1200), divided by ~200 tokens per turn (user + assistant).
+// Returns 0 for unknown models (no limit displayed).
+func (c *Catalog) RecommendedTurns(key string) int {
+	m := c.byKey[key]
+	if m == nil {
+		return 0
+	}
+	// Estimate system prompt size by tier.
+	promptOverhead := 1500
+	if m.Tier <= 1 {
+		promptOverhead = 1200 // slim tool descriptions
+	}
+	available := m.ContextLimit - 1200 - promptOverhead // 1200 = tokenReserve
+	if available <= 0 {
+		return 1
+	}
+	return available / 200 // ~100 tok user + ~100 tok response
+}
+
 // IsTier1 returns true if the model belongs to Tier 1 (≤2B params).
 func (c *Catalog) IsTier1(key string) bool { return c.Tier(key) == 1 }
 

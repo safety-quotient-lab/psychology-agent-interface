@@ -191,7 +191,8 @@ type Model struct {
 	displayLines []string
 	totalTokens  int
 	totalTime    float64
-	turnCount    int
+	turnCount    int // per tool-call chain
+	chatTurns    int // conversation-level user submissions
 	sessionTokens int
 
 	// streaming accumulator — holds tokens until msgStreamDone
@@ -797,6 +798,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncViewport()
 				return m, m.critic().startReview(userMsg, clean)
 			}
+			if rec := m.cfg.catalog.RecommendedTurns(m.modelName); rec > 0 && m.chatTurns >= rec {
+				m.displayLines = append(m.displayLines,
+					style.Warning.Render(fmt.Sprintf("context pressure: %d/%d turns — /clear recommended", m.chatTurns, rec)), "")
+			}
 			m.returnToInput()
 			m.syncViewport()
 			return m, nil
@@ -964,6 +969,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.totalTokens = 0
 					m.totalTime = 0
 					m.turnCount = 0
+					m.chatTurns = 0
 					m.state = stateLoading
 					m.displayLines = append(m.displayLines,
 						style.Dim.Render(fmt.Sprintf("switching to %s...", selected.Key)), "")
@@ -1079,6 +1085,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.totalTokens = 0
 				m.totalTime = 0
 				m.turnCount = 0
+				m.chatTurns++
 				m.lastToolKey = ""
 				removed := m.compactIfNeeded()
 				m.state = stateThinking
@@ -1444,6 +1451,7 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 		m.totalTokens = 0
 		m.totalTime = 0
 		m.turnCount = 0
+		m.chatTurns = 0
 		return cmdAutoContext(m.cfg.cwd)
 
 	case "/cwd":
@@ -1491,6 +1499,7 @@ func (m *Model) handleSlash(text string) tea.Cmd {
 		m.totalTokens = 0
 		m.totalTime = 0
 		m.turnCount = 0
+		m.chatTurns = 0
 		m.state = stateLoading
 		m.displayLines = append(m.displayLines,
 			style.Dim.Render(fmt.Sprintf("switching to %s...", newModel)), "")
@@ -1794,6 +1803,15 @@ func (m Model) renderPromptBar() string {
 	rightParts := ""
 	if model != "" {
 		rightParts += "[" + model + "]"
+	}
+	recommended := m.cfg.catalog.RecommendedTurns(m.modelName)
+	if recommended > 0 && m.chatTurns > 0 {
+		rightParts += fmt.Sprintf(" %d/%d", m.chatTurns, recommended)
+		if m.chatTurns >= recommended {
+			rightParts += " /clear recommended"
+		}
+	} else if m.chatTurns > 0 {
+		rightParts += fmt.Sprintf(" t%d", m.chatTurns)
 	}
 	if m.sessionTokens > 0 {
 		rightParts += fmt.Sprintf(" %dtok", m.sessionTokens)
